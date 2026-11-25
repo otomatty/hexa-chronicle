@@ -71,6 +71,9 @@ export interface ViewCallbacks {
 
 const colorNum = (hex: string) => new THREE.Color(hex).getHex();
 
+export interface BenchStage { dist: number; fps: number; low: number; ms: number; calls: number; tris: number; frames: number }
+export interface BenchResult { gpu: string; w: number; h: number; pr: number; stages: BenchStage[] }
+
 export class GameView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -92,6 +95,8 @@ export class GameView {
   private shadowAt = { x: 1e9, z: 1e9, d: 0 };
   private shadowDirty = true;
   private orbit = false;
+  private spin = 0;
+  private bench: { frames: number[]; js: number[] } | null = null;
   private labelSig = '';
   private labelsDirty = true;
   selectedUnit = 0;
@@ -220,6 +225,7 @@ export class GameView {
       this.last = now;
       const a = this.statAcc;
       a.t += real; a.n++;
+      if (this.bench) this.bench.frames.push(real * 1000);
       // 何も動いていないときは 1 フレームおきに描く（水面と雲だけなので 30fps で十分）
       this.parity = !this.parity;
       if (!this.isActive(now) && this.parity) { this.skipped += dt; return; }
@@ -228,6 +234,7 @@ export class GameView {
       this.frame(Math.min(0.1, dt + this.skipped));
       this.skipped = 0;
       a.js += performance.now() - t0;
+      if (this.bench) this.bench.js.push(performance.now() - t0);
       if (a.t >= 1) {
         this.stats.fps = a.n / a.t;
         this.stats.ms = a.js / a.n;
@@ -269,6 +276,49 @@ export class GameView {
   setAutoScale(on: boolean): void {
     this.autoScale = on;
     if (!on && this.stats.scale !== 1) { this.stats.scale = 1; this.renderer.setPixelRatio(this.basePR); this.resize(); }
+  }
+
+  /**
+   * 実機での性能計測：近景・中景・遠景の 3 段階でカメラを回しながら、実際の表示間隔を記録する。
+   * 解像度の自動調整は計測中だけ切り、終わったら元に戻す。
+   */
+  async benchmark(onStage?: (i: number, n: number) => void): Promise<BenchResult> {
+    const c = this.cam, keep = { gd: c.gd, gyaw: c.gyaw }, auto = this.autoScale;
+    const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    this.setAutoScale(false);
+    this.spin = 0.3;
+    const dists = [10, 22, 42], stages: BenchStage[] = [];
+    try {
+      for (let i = 0; i < dists.length; i++) {
+        onStage?.(i, dists.length);
+        c.gd = dists[i];
+        await wait(800);
+        const b = this.bench = { frames: [], js: [] };
+        await wait(2600);
+        this.bench = null;
+        const n = b.frames.length;
+        const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+        const sorted = [...b.frames].sort((x, y) => y - x);
+        const worst = sorted[Math.min(n - 1, Math.max(1, Math.floor(n * 0.01)))] ?? 0;
+        stages.push({
+          dist: dists[i], frames: n,
+          fps: n ? 1000 / (sum(b.frames) / n) : 0,
+          low: worst ? 1000 / worst : 0,
+          ms: b.js.length ? sum(b.js) / b.js.length : 0,
+          calls: this.renderer.info.render.calls, tris: this.renderer.info.render.triangles,
+        });
+      }
+    } finally {
+      this.bench = null;
+      this.spin = 0;
+      c.gd = keep.gd; c.gyaw = keep.gyaw;
+      this.setAutoScale(auto);
+    }
+    const gl = this.renderer.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    const el = this.renderer.domElement;
+    return { gpu, w: el.width, h: el.height, pr: window.devicePixelRatio || 1, stages };
   }
 
   dispose(): void {
@@ -743,7 +793,8 @@ export class GameView {
       c.gz += (-mx * sn + mz * cs) * pan;
       this.clampTarget();
     }
-    if (this.orbit) { c.gyaw += dt * 0.16; this.lastInput = performance.now(); }
+    const spin = this.orbit ? 0.16 : this.spin;
+    if (spin) { c.gyaw += dt * spin; this.lastInput = performance.now(); }
     if (k.has('q')) c.gyaw += dt * 1.6;
     if (k.has('e')) c.gyaw -= dt * 1.6;
     const ease = 1 - Math.exp(-dt * 10);

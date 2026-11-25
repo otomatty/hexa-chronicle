@@ -387,6 +387,17 @@ class Game implements GameApi {
     this.view.setAutoScale(on);
   }
   perfStats(): { fps: number; ms: number; calls: number; tris: number; scale: number } { return this.view.stats; }
+  private benching = false;
+  /** 実機計測：結果と、この端末に合う設定の提案を表示する */
+  benchmark(): void {
+    if (this.benching) return;
+    this.benching = true;
+    this.hud.closeModal();
+    this.deselect();
+    void this.view.benchmark((i, n) => this.hud.benchProgress(`性能を計測しています… ${i + 1} / ${n}（約 10 秒）`))
+      .then((r) => this.hud.showBench(r))
+      .finally(() => { this.benching = false; this.hud.benchProgress(null); });
+  }
   toTitle(): void { title(); }
 
   private key(e: KeyboardEvent): void {

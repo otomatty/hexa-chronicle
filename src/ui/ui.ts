@@ -5,7 +5,9 @@ import {
   growthCost, itemCost, majors, maxMoves, milAt, militaryPower, tileYield, unitMaintenance, unitStrength, validImprovements,
 } from '../core/game';
 import type { Action, City, GameState, NewGameOptions, Winner, Yields } from '../core/types';
-import type { Quality } from '../render/view';
+import type { BenchResult, Quality } from '../render/view';
+
+const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 import { emblem, LINES, portrait, type Lines, type Mood } from './leaders';
 
 export type Scene = keyof Lines;
@@ -41,6 +43,7 @@ export interface GameApi {
   cloudSave(): void;
   cloudLoad(): void;
   setQuality(q: Quality): void;
+  benchmark(): void;
   setGrid(on: boolean): void;
   toTitle(): void;
 }
@@ -202,6 +205,8 @@ export class Hud {
       case 'quality': this.closeModal(); api.setQuality(v as Quality); break;
       case 'grid': api.setGrid(!api.grid); this.showMenu(); break;
       case 'perf': api.setPerf(!api.perf); this.showMenu(); break;
+      case 'bench': api.benchmark(); break;
+      case 'b-copy': this.copyBench(); break;
       case 'autoscale': api.setAutoScale(!api.autoScale); this.showMenu(); break;
       case 'title': this.confirm('タイトルに戻りますか？（オートセーブは残ります）', () => api.toTitle()); break;
     }
@@ -576,9 +581,53 @@ export class Hud {
       <div class="sec">画質</div><div class="acts" style="margin:0">${q('low', '低')}${q('medium', '中')}${q('high', '高')}</div>
       <button class="btn" data-a="autoscale">重いとき解像度を自動で下げる: ${api.autoScale ? 'ON' : 'OFF'}</button>
       <button class="btn" data-a="perf">性能表示（fps など）: ${api.perf ? 'ON' : 'OFF'}</button>
+      <button class="btn" data-a="bench">⏱ この端末で性能を計測する</button>
       <button class="btn" data-a="grid">グリッド表示: ${api.grid ? 'ON' : 'OFF'}</button>
       <button class="btn" data-a="help">❓ 操作方法</button>
       <button class="btn danger" data-a="title">タイトルに戻る</button></div>`);
+  }
+
+  // ---------------------------------------------------------------- 実機計測
+  private benchEl: HTMLDivElement | null = null;
+  benchProgress(text: string | null): void {
+    if (!text) { this.benchEl?.remove(); this.benchEl = null; return; }
+    if (!this.benchEl) { this.benchEl = document.createElement('div'); this.benchEl.id = 'benchbar'; document.body.appendChild(this.benchEl); }
+    this.benchEl.textContent = text;
+  }
+
+  showBench(r: BenchResult): void {
+    const api = this.api, QN: Record<Quality, string> = { low: '低', medium: '中', high: '高' };
+    const names = ['近景', '中景', '遠景'];
+    const ok = r.stages.every((s) => s.frames >= 3);
+    const worst = Math.min(...r.stages.map((s) => s.fps)), worstLow = Math.min(...r.stages.map((s) => s.low));
+    const js = Math.max(...r.stages.map((s) => s.ms));
+    let advice: string, next: Quality | null = null;
+    if (!ok) advice = '計測中に画面が隠れていたため、正しく測れませんでした。この画面を表示したまま、もう一度お試しください。';
+    else if (worst < 30 && api.quality !== 'low') { next = api.quality === 'high' ? 'medium' : 'low'; advice = `この端末では画質「${QN[api.quality]}」は重めです。「${QN[next]}」に下げると快適になります。`; }
+    else if (worst < 30) advice = '画質「低」でも重めです。「重いとき解像度を自動で下げる」を ON にして、ウィンドウを小さくするとさらに軽くなります。';
+    else if (worst < 50) advice = `遊べる速さですが余裕は多くありません。${api.autoScale ? '混み合う場面では解像度が自動で少し下がります。' : '「重いとき解像度を自動で下げる」を ON にすると安定します。'}`;
+    else if (api.quality !== 'high' && worstLow >= 45 && js < 8) { next = api.quality === 'low' ? 'medium' : 'high'; advice = `十分に余裕があります。画質「${QN[next]}」も快適に動く見込みです。`; }
+    else advice = 'いまの設定で快適に動いています。';
+    const rows = r.stages.map((s, i) => `<tr><td>${names[i]}</td><td class="n">${s.fps.toFixed(0)}</td><td class="n">${s.low.toFixed(0)}</td><td class="n">${s.ms.toFixed(1)}</td><td class="n">${s.calls}</td><td class="n">${(s.tris / 1000).toFixed(0)}k</td></tr>`).join('');
+    const text = `Hexa Chronicle 計測 | 画質 ${QN[api.quality]} | ${r.w}x${r.h} (dpr ${r.pr.toFixed(2)}) | ${r.gpu} | `
+      + r.stages.map((s, i) => `${names[i]} ${s.fps.toFixed(0)}fps/最低${s.low.toFixed(0)}/処理${s.ms.toFixed(1)}ms/${s.calls}回/${(s.tris / 1000).toFixed(0)}k`).join(' | ');
+    this.open('計測結果', `<div class="bench">
+      <p class="help" style="margin-top:0">画質「${QN[api.quality]}」・描画 ${r.w}×${r.h}<br>${esc(r.gpu)}</p>
+      <table><tr><th></th><th>平均 fps</th><th>最低 fps</th><th>処理 ms</th><th>描画命令</th><th>三角形</th></tr>${rows}</table>
+      <p class="advice">${advice}</p>
+      <textarea id="benchtext" readonly rows="3">${esc(text)}</textarea>
+      <p class="help">平均 fps は画面の更新頻度（多くは 60）が上限です。「最低」は最も遅かった 1% のコマの速さ、「処理 ms」は 1 コマあたりの CPU 側の時間です。</p>
+      <div class="acts">${next ? `<button class="btn pri" data-a="quality" data-v="${next}">画質を「${QN[next]}」にする</button>` : ''}
+        <button class="btn" data-a="b-copy">結果をコピー</button><button class="btn" data-a="close">閉じる</button></div></div>`);
+  }
+
+  private copyBench(): void {
+    const ta = this.modal.querySelector<HTMLTextAreaElement>('#benchtext');
+    if (!ta) return;
+    ta.select();
+    const done = () => this.toast('計測結果をコピーしました', 'good');
+    const manual = () => this.toast('選択された文字を Ctrl+C（⌘C）でコピーしてください', '');
+    try { navigator.clipboard.writeText(ta.value).then(done, manual); } catch { manual(); }
   }
 
   showHelp(): void {
