@@ -198,7 +198,7 @@ export class Props {
 
   /** rich: 草むらや小石などの細かい装飾も置くか */
   constructor(private field: Field, uniforms: MapUniforms, private rich: boolean) {
-    this.mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }), uniforms, false);
+    this.mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }), uniforms, 'prop', rich);
   }
 
   /** 地物や改良が変わったときだけ作り直す */

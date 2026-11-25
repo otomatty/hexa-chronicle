@@ -12,6 +12,7 @@ export interface MapUniforms {
   uTime: { value: number };
   uHover: { value: THREE.Vector2 };
   uGrid: { value: number };
+  uExposure: { value: number };
 }
 
 export interface MapTextures {
@@ -39,7 +40,7 @@ export function createMapTextures(w: number, h: number): MapTextures {
     tile, vis,
     uniforms: {
       uTile: { value: tt }, uVis: { value: vt }, uMap: { value: new THREE.Vector2(w, h) }, uPC: { value: mk() }, uPC2: { value: mk() },
-      uTime: { value: 0 }, uHover: { value: new THREE.Vector2(-1, -1) }, uGrid: { value: 1 },
+      uTime: { value: 0 }, uHover: { value: new THREE.Vector2(-1, -1) }, uGrid: { value: 1 }, uExposure: { value: 0.66 },
     },
   };
 }
@@ -54,7 +55,20 @@ uniform vec3 uPC2[9];
 uniform float uTime;
 uniform vec2 uHover;
 uniform float uGrid;
+uniform float uExposure;
+#ifdef HC_TERRAIN
+varying vec4 vMat;
+#endif
 const float HC_SQ3 = 1.7320508;
+
+// トーンマッピング（ACES 近似）と sRGB 変換。レンダラー側の変換は使わず、
+// どの描画先（画面／後処理用のバッファ）でも同じ色になるようシェーダー内で行う
+vec3 hcTone(vec3 c) {
+  c *= uExposure;
+  c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
 
 float hcHash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -169,9 +183,11 @@ vec3 hcFog(vec3 col, vec2 p) {
   float vis = smoothstep(0.15, 0.8, v.g);
   float lum = dot(col, vec3(0.3, 0.59, 0.11));
   vec3 sepia = vec3(lum) * vec3(1.03, 0.93, 0.76);
-  vec3 dim = mix(sepia, col, 0.32) * 0.8 + vec3(0.05, 0.04, 0.025);
+  vec3 paper = hcParchment(p);
+  // 視界外は、地図に描き込まれた絵のように紙の色へ寄せる
+  vec3 dim = mix(mix(sepia, col, 0.32) * 0.85 + vec3(0.05, 0.04, 0.025), paper, 0.42);
   col = mix(dim, col, vis);
-  return mix(hcParchment(p), col, e);
+  return mix(paper, col, e);
 }
 `;
 
@@ -188,14 +204,75 @@ const HC_VERT_MAIN = /* glsl */ `
 const HC_TERRAIN_COLOR = /* glsl */ `
   #ifdef HC_DETAIL
   {
-    float dn = hcFbm(vHcPos.xz * 2.3);
-    float dg = hcN(vHcPos.xz * 27.0);
+    vec2 q = vHcPos.xz;
     float land = step(0.0, vHcPos.y);
-    diffuseColor.rgb *= mix(1.0, 0.72 + 0.56 * dn, 0.55 + 0.45 * land);
-    diffuseColor.rgb *= 0.94 + 0.12 * dg * land;
+    float big = hcFbm(q * 0.55);
+    float dn = hcFbm(q * 2.3);
+    float fine = hcN(q * 27.0);
+    vec3 c = diffuseColor.rgb;
+    // 草地：黄緑と深緑のまだら + 細かな草目
+    float gr = vMat.x * land;
+    float blades = hcN(vec2(q.x * 64.0 + q.y * 9.0, q.y * 15.0));
+    vec3 grassC = c * mix(vec3(0.84, 0.95, 0.78), vec3(1.08, 1.05, 0.9), big) * (0.86 + 0.22 * blades * fine + 0.1 * dn);
+    // 砂：風紋
+    float sd = vMat.y;
+    float rip = sin((q.x * 0.8 + q.y * 0.6) * 44.0 + hcFbm(q * 1.4) * 9.0);
+    vec3 sandC = c * (0.94 + 0.06 * rip * land + 0.12 * (dn - 0.5)) * mix(vec3(0.97), vec3(1.07, 0.99, 0.88), big);
+    // 雪：青みのある陰影ときらめき
+    vec3 snowC = mix(c * vec3(0.84, 0.91, 1.02), c * 1.05, smoothstep(0.3, 0.7, dn));
+    snowC += step(0.988, hcHash(floor(q * 95.0))) * 0.3;
+    // 岩：地層と割れ目
+    float strata = sin(vHcPos.y * 34.0 + hcFbm(q * 3.0) * 7.0);
+    float crack = 1.0 - smoothstep(0.0, 0.07, abs(hcN(q * 7.0) - 0.5));
+    vec3 rockC = c * (0.9 + 0.1 * strata) * (1.0 - 0.32 * crack) * (0.82 + 0.36 * dn);
+    float wsum = gr + sd + vMat.z + vMat.w + 0.0001;
+    vec3 generic = c * (0.78 + 0.44 * dn) * (0.94 + 0.12 * fine * land);
+    vec3 tex = (grassC * gr + sandC * sd + snowC * vMat.z + rockC * vMat.w) / wsum;
+    diffuseColor.rgb = mix(generic, tex, clamp(wsum, 0.0, 1.0));
   }
   #endif
   diffuseColor.rgb = hcOverlay(diffuseColor.rgb, vHcPos.xz, uGrid);
+`;
+// 建物：壁に窓、屋根に瓦の段、石畳に目地を描く
+const HC_BUILDING_COLOR = /* glsl */ `
+  #ifdef HC_DETAIL
+  {
+    vec3 wn = normalize(cross(dFdx(vHcPos), dFdy(vHcPos)));
+    vec3 c = diffuseColor.rgb;
+    float lum = dot(c, vec3(0.3, 0.59, 0.11));
+    float sat = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+    if (abs(wn.y) < 0.35) {
+      vec2 tdir = normalize(vec2(-wn.z, wn.x) + 1e-5);
+      float u = dot(vHcPos.xz, tdir) * 27.0;
+      float v = vHcPos.y * 31.0;
+      vec2 f = fract(vec2(u, v));
+      float win = step(0.3, f.x) * step(f.x, 0.72) * step(0.3, f.y) * step(f.y, 0.78);
+      float lit = step(0.72, hcHash(floor(vec2(u, v)) + 3.0));
+      float wallish = smoothstep(0.2, 0.42, lum) * (1.0 - smoothstep(0.12, 0.26, sat));
+      vec3 wc = mix(vec3(0.08, 0.1, 0.15), vec3(1.0, 0.8, 0.42), lit * 0.5);
+      c *= 0.9 + 0.16 * hcN(vec2(u, v) * 1.7);
+      c = mix(c, wc, win * wallish * 0.78);
+    } else {
+      float flat_ = smoothstep(0.9, 0.98, abs(wn.y));
+      // 屋根：斜面に沿った瓦の段
+      float rows = smoothstep(0.0, 0.25, fract(vHcPos.y * 75.0));
+      c *= mix(0.82 + 0.18 * rows, 1.0, flat_);
+      // 石畳：ずらした目地
+      vec2 g = vHcPos.xz * 21.0;
+      g.x += step(1.0, mod(g.y, 2.0)) * 0.5;
+      vec2 gf = fract(g);
+      float mortar = 1.0 - step(0.09, gf.x) * step(0.09, gf.y);
+      float stone = 0.88 + 0.2 * hcHash(floor(g));
+      c *= mix(1.0, stone * (1.0 - 0.22 * mortar), flat_ * (1.0 - smoothstep(0.1, 0.3, sat)));
+    }
+    diffuseColor.rgb = c;
+  }
+  #endif
+`;
+const HC_PROP_COLOR = /* glsl */ `
+  #ifdef HC_DETAIL
+  diffuseColor.rgb *= 0.86 + 0.28 * hcN(vHcPos.xz * 33.0 + vHcPos.y * 21.0);
+  #endif
 `;
 const HC_TERRAIN_NORMAL = /* glsl */ `
   #ifdef HC_DETAIL
@@ -205,29 +282,38 @@ const HC_TERRAIN_NORMAL = /* glsl */ `
     float b0 = hcFbm(bp);
     float bx = hcFbm(bp + vec2(be * 4.6, 0.0));
     float bz = hcFbm(bp + vec2(0.0, be * 4.6));
-    float bs = (vHcPos.y > 0.0 ? 0.05 : 0.01) + smoothstep(0.35, 0.9, vHcPos.y) * 0.06;
+    float bs = (vHcPos.y > 0.0 ? 0.045 : 0.01) + vMat.w * 0.09 + vMat.y * 0.02;
     vec3 wn = vec3(b0 - bx, 0.0, b0 - bz) * (bs / be);
     normal = normalize(normal + (viewMatrix * vec4(wn, 0.0)).xyz);
   }
   #endif
 `;
 
-/** 標準マテリアルに霧と雲の影（とオプションでグリッド・国境・地表ディテール）を差し込む */
-export function patchMaterial<T extends THREE.Material>(mat: T, uniforms: MapUniforms, overlay: boolean, detail = false): T {
-  if (detail) mat.defines = { ...(mat.defines ?? {}), HC_DETAIL: '' };
+export type PatchKind = 'terrain' | 'prop' | 'building' | 'unit';
+
+/**
+ * 標準マテリアルに、雲の影・戦場の霧・トーンマッピングと、種類ごとの質感
+ * （地表のテクスチャ／建物の窓や瓦／植生の色むら）を差し込む。
+ */
+export function patchMaterial<T extends THREE.Material>(mat: T, uniforms: MapUniforms, kind: PatchKind, detail = false): T {
+  const terrain = kind === 'terrain';
+  mat.defines = { ...(mat.defines ?? {}), ...(detail ? { HC_DETAIL: '' } : {}), ...(terrain ? { HC_TERRAIN: '' } : {}) };
+  const color = terrain ? HC_TERRAIN_COLOR : kind === 'building' ? HC_BUILDING_COLOR : kind === 'prop' ? HC_PROP_COLOR : '';
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\n' + HC_VERT_DECL)
-      .replace('#include <project_vertex>', '#include <project_vertex>\n' + HC_VERT_MAIN);
+      .replace('#include <common>', '#include <common>\n' + HC_VERT_DECL + (terrain ? '\nattribute vec4 aMat;\nvarying vec4 vMat;' : ''))
+      .replace('#include <project_vertex>', '#include <project_vertex>\n' + HC_VERT_MAIN + (terrain ? '\nvMat = aMat;' : ''));
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + HC_FRAG)
-      .replace('#include <color_fragment>', '#include <color_fragment>\n' + (overlay ? HC_TERRAIN_COLOR : '') + '\ndiffuseColor.rgb *= 1.0 - 0.3 * hcCloud(vHcPos.xz);')
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + (overlay ? HC_TERRAIN_NORMAL : ''))
+      .replace('#include <color_fragment>', '#include <color_fragment>\n' + color + '\ndiffuseColor.rgb *= 1.0 - 0.3 * hcCloud(vHcPos.xz);')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + (terrain ? HC_TERRAIN_NORMAL : ''))
+      .replace('#include <tonemapping_fragment>', 'gl_FragColor.rgb = hcTone(gl_FragColor.rgb);')
+      .replace('#include <colorspace_fragment>', '')
       // 未探索の場所では立体物を描かない（古地図の上に影絵が浮かないように）
-      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + (overlay ? '' : 'if (hcVis(vHcPos.xz).r < 0.3) discard;\n') + 'gl_FragColor.rgb = hcFog(gl_FragColor.rgb, vHcPos.xz);');
+      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + (terrain ? '' : 'if (hcVis(vHcPos.xz).r < 0.3) discard;\n') + 'gl_FragColor.rgb = hcFog(gl_FragColor.rgb, vHcPos.xz);');
   };
-  mat.customProgramCacheKey = () => 'hc' + (overlay ? 1 : 0) + (detail ? 1 : 0);
+  mat.customProgramCacheKey = () => 'hc:' + kind + (detail ? 1 : 0);
   return mat;
 }
 
@@ -279,8 +365,7 @@ void main() {
   col *= 1.0 - 0.3 * hcCloud(p);
   col = hcOverlay(col, p, uGrid * (0.35 + 0.65 * smoothstep(0.1, 0.5, shallow)));
   gl_FragColor = vec4(col, mix(mix(0.94, 0.6, smoothstep(0.5, 1.0, shallow)), 0.92, inland));
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
+  gl_FragColor.rgb = hcTone(gl_FragColor.rgb);
   gl_FragColor.rgb = hcFog(gl_FragColor.rgb, p);
   gl_FragColor.a = mix(1.0, gl_FragColor.a, smoothstep(0.28, 0.62, m.r));
 }`;

@@ -36,12 +36,12 @@ export class Fx {
   private mat: THREE.ShaderMaterial;
   private tmp = new THREE.Color();
 
-  constructor() {
+  constructor(exposure: { value: number }) {
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aColor', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uScale: { value: 600 } },
+      uniforms: { uScale: { value: 600 }, uExposure: exposure },
       vertexShader: /* glsl */ `
         attribute vec4 aColor;
         attribute float aSize;
@@ -55,13 +55,14 @@ export class Fx {
         }`,
       fragmentShader: /* glsl */ `
         varying vec4 vColor;
+        uniform float uExposure;
         void main() {
           float d = length(gl_PointCoord - 0.5);
           float a = vColor.a * (1.0 - smoothstep(0.28, 0.5, d));
           if (a < 0.01) discard;
-          gl_FragColor = vec4(vColor.rgb, a);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
+          vec3 c = vColor.rgb * uExposure;
+          c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+          gl_FragColor = vec4(pow(c, vec3(1.0 / 2.2)), a);
         }`,
       transparent: true,
       depthWrite: false,

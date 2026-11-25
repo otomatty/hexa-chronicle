@@ -12,6 +12,23 @@ const COL = {
   hill: C(0x8a8a52), rock: C(0x958c80), rockDark: C(0x756c62), sand: C(0xdccf9a), deep: C(0x0f2238), bank: C(0x8f9a5c), riverBed: C(0x3f5a5c),
 };
 
+/** タイルの質感の重み [草, 砂, 雪, 岩] */
+function tileMaterial(t: Tile): number[] {
+  if (t.elev === 2) return t.terrain === 'snow' || t.terrain === 'tundra' ? [0, 0, 0.4, 0.6] : [0, 0, 0, 1];
+  let m: number[];
+  switch (t.terrain) {
+    case 'grass': m = [1, 0, 0, 0]; break;
+    case 'plains': m = [0.75, 0.25, 0, 0]; break;
+    case 'desert': m = [0, 1, 0, 0]; break;
+    case 'tundra': m = [0.45, 0, 0.1, 0.45]; break;
+    case 'snow': m = [0, 0, 1, 0]; break;
+    case 'coast': m = [0, 1, 0, 0]; break;
+    default: m = [0, 0.6, 0, 0.4];
+  }
+  if (t.elev === 1) { m = m.map((v) => v * 0.82); m[3] += 0.18; }
+  return m;
+}
+
 function tileColor(t: Tile): THREE.Color {
   if (t.elev === 2) return t.terrain === 'desert' ? C(0xa9825c) : t.terrain === 'snow' ? C(0xc4c8cb) : COL.rock.clone();
   const c = COL[t.terrain].clone();
@@ -39,6 +56,9 @@ export class Field {
   private seed: number;
   // sample() の結果
   sh = 0; sr = 0; sg = 0; sb = 0; swat = 0; smt = 0; sriv = 0;
+  /** 質感の重み [草, 砂, 雪, 岩] */
+  smat = [0, 0, 0, 0];
+  private mat: Float32Array;
 
   constructor(s: GameState) {
     const n = s.w * s.h;
@@ -49,6 +69,7 @@ export class Field {
     this.hill = new Float32Array(n); this.mtn = new Float32Array(n);
     this.water = new Uint8Array(n); this.col = new Float32Array(n * 3);
     this.river = new Uint8Array(n);
+    this.mat = new Float32Array(n * 4);
     for (let i = 0; i < n; i++) {
       const t = s.tiles[i];
       this.cx[i] = tileX(s.w, i); this.cz[i] = tileZ(s.w, i);
@@ -63,15 +84,18 @@ export class Field {
       this.base[i] = base; this.amp[i] = amp;
       const c = tileColor(t);
       this.col[i * 3] = c.r; this.col[i * 3 + 1] = c.g; this.col[i * 3 + 2] = c.b;
+      this.mat.set(tileMaterial(t), i * 4);
     }
   }
 
   sample(x: number, z: number): number {
     const i = worldToTile(this.w, this.h, x, z);
     this.sriv = 0;
-    if (i < 0) { this.sh = -0.5; this.sr = COL.ocean.r; this.sg = COL.ocean.g; this.sb = COL.ocean.b; this.swat = 1; this.smt = 0; return -0.5; }
+    if (i < 0) { this.smat[0] = 0; this.smat[1] = 0.6; this.smat[2] = 0; this.smat[3] = 0.4; this.sh = -0.5; this.sr = COL.ocean.r; this.sg = COL.ocean.g; this.sb = COL.ocean.b; this.swat = 1; this.smt = 0; return -0.5; }
     const { nb, cx, cz, base, amp, hill, mtn, water, col } = this;
     let sw = 0, h = 0, a = 0, hl = 0, peak = 0, wat = 0, swc = 0, r = 0, g = 0, b = 0;
+    let m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+    const mat = this.mat;
     for (let k = -1; k < 6; k++) {
       const j = k < 0 ? i : nb[i * 6 + k];
       if (j < 0) continue;
@@ -87,6 +111,7 @@ export class Field {
       }
       const wc = w * w;
       swc += wc; r += wc * col[j * 3]; g += wc * col[j * 3 + 1]; b += wc * col[j * 3 + 2];
+      m0 += wc * mat[j * 4]; m1 += wc * mat[j * 4 + 1]; m2 += wc * mat[j * 4 + 2]; m3 += wc * mat[j * 4 + 3];
     }
     h /= sw; a /= sw; hl /= sw; wat /= sw;
     h += (fbm(x * 1.7, z * 1.7, this.seed + 3, 3) - 0.5) * a * 2;
@@ -115,6 +140,7 @@ export class Field {
         this.sriv = 1 - k;
       }
     }
+    this.smat[0] = m0 / swc; this.smat[1] = m1 / swc; this.smat[2] = m2 / swc; this.smat[3] = m3 / swc;
     this.sh = h; this.sr = r / swc; this.sg = g / swc; this.sb = b / swc; this.swat = wat; this.smt = peak;
     return h;
   }
@@ -143,7 +169,7 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
   const n = s.w * s.h;
   const OFF = 4096, K = 16384;
   const vmap = new Map<number, number>();
-  const pos: number[] = [], col: number[] = [], idx: number[] = [];
+  const pos: number[] = [], col: number[] = [], idx: number[] = [], mats: number[] = [];
   const meta: number[] = []; // 高さ以外の補助情報（山の重み, 水の重み）
   const ux = (SQ3 / 2) * HEX / N, uz = HEX / N;
   const seed = s.seed;
@@ -157,6 +183,7 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
     v = pos.length / 3;
     pos.push(x, h, z);
     col.push(field.sr, field.sg, field.sb);
+    mats.push(field.smat[0], field.smat[1], field.smat[2], field.smat[3]);
     meta.push(field.smt, field.swat, field.sriv);
     vmap.set(key, v);
     return v;
@@ -198,17 +225,23 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
       cc.lerp(COL.deep, Math.min(1, -h / 0.45) * 0.85);
     }
     if (h >= 0) {
-      if (wat > 0.03 && h < 0.1) cc.lerp(COL.sand, Math.min(1, wat * 6) * (1 - h / 0.1));
+      if (wat > 0.03 && h < 0.1) {
+        const k = Math.min(1, wat * 6) * (1 - h / 0.1);
+        cc.lerp(COL.sand, k);
+        mats[v * 4] *= 1 - k; mats[v * 4 + 1] += k * (1 - mats[v * 4 + 1]); mats[v * 4 + 2] *= 1 - k; mats[v * 4 + 3] *= 1 - k;
+      }
       const slope = 1 - nrm.getY(v);
       if (h > 0.26 && mt < 0.02) {
         const rk = Math.min(1, Math.max(0, (slope - 0.16) / 0.22));
         cc.lerp(nz > 0.5 ? COL.rock : COL.rockDark, rk * 0.9);
+        mats[v * 4] *= 1 - rk; mats[v * 4 + 1] *= 1 - rk; mats[v * 4 + 2] *= 1 - rk; mats[v * 4 + 3] += rk * (1 - mats[v * 4 + 3]);
       }
     }
     col[v * 3] = cc.r; col[v * 3 + 1] = cc.g; col[v * 3 + 2] = cc.b;
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), uniforms, true, detail);
+  geo.setAttribute('aMat', new THREE.Float32BufferAttribute(mats, 4));
+  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), uniforms, 'terrain', detail);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.castShadow = true;

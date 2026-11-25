@@ -8,6 +8,7 @@ import { Fx } from './fx';
 import { planDistricts } from './districts';
 import { cityGeometry, districtGeometry, unitGeometry } from './models';
 import { hash } from './geo';
+import { Post } from './post';
 import { Props } from './props';
 import { createMapTextures, PARCHMENT, patchMaterial, type MapTextures } from './shaders';
 import { buildTerrain, buildWater, Field } from './terrain';
@@ -48,8 +49,10 @@ interface Emitter { x: number; y: number; z: number; tile: number; dark: boolean
 
 const ARROW_GEO = new THREE.BoxGeometry(0.018, 0.018, 0.3);
 const BALL_GEO = new THREE.SphereGeometry(0.07, 7, 5);
-const ARROW_MAT = new THREE.MeshBasicMaterial({ color: 0x5b4025 });
-const BALL_MAT = new THREE.MeshBasicMaterial({ color: 0x2a2622 });
+// レンダラーは色変換をしないので、単色マテリアルには表示色をそのまま渡す
+const raw = (hex: number) => new THREE.Color().setHex(hex, THREE.LinearSRGBColorSpace);
+const ARROW_MAT = new THREE.MeshBasicMaterial({ color: raw(0x5b4025) });
+const BALL_MAT = new THREE.MeshBasicMaterial({ color: raw(0x2a2622) });
 
 export interface ViewCallbacks {
   onTileClick(tile: number, button: number): void;
@@ -77,7 +80,8 @@ export class GameView {
   private units = new Map<number, UnitView>();
   private cities = new Map<number, CityView>();
   private shots: Shot[] = [];
-  private fx = new Fx();
+  private fx!: Fx;
+  private post: Post | null = null;
   private timers: { at: number; fn: () => void }[] = [];
   private emitters = new Map<number, Emitter[]>();
   private campEmitters: Emitter[] = [];
@@ -101,10 +105,12 @@ export class GameView {
     this.state = s;
     this.mapW = s.w * SQ3 * HEX;
     this.mapH = s.h * 1.5 * HEX;
-    this.renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance' });
+    // 後処理を使う画質では、アンチエイリアスは描画バッファ側（MSAA）で行う
+    this.renderer = new THREE.WebGLRenderer({ antialias: quality === 'low', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    // トーンマッピングと sRGB 変換は各シェーダー内（hcTone）で行う
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.shadowMap.enabled = q.shadow > 0;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     host.appendChild(this.renderer.domElement);
@@ -112,8 +118,7 @@ export class GameView {
     this.labels.className = 'labels';
     host.appendChild(this.labels);
 
-    this.scene.background = new THREE.Color(PARCHMENT);
-    this.scene.fog = new THREE.Fog(0xc9c2ad, 90, 260);
+    this.scene.background = raw(PARCHMENT);
     this.camera = new THREE.PerspectiveCamera(34, 1, 0.5, 400);
 
     this.scene.add(new THREE.HemisphereLight(0xd8e8ff, 0x8f7f60, 1.55));
@@ -137,7 +142,9 @@ export class GameView {
       this.tex.uniforms.uPC.value[i].set(p.color);
       this.tex.uniforms.uPC2.value[i].set(p.color2);
     });
-    patchMaterial(this.unitMat, this.tex.uniforms, false);
+    patchMaterial(this.unitMat, this.tex.uniforms, 'unit');
+    this.fx = new Fx(this.tex.uniforms.uExposure);
+    if (quality !== 'low') this.post = new Post(this.renderer, quality === 'high' ? 4 : 2);
     for (let i = 0; i < s.tiles.length; i++) {
       const t = s.tiles[i];
       const water = t.terrain === 'ocean' || t.terrain === 'coast';
@@ -149,11 +156,11 @@ export class GameView {
     this.scene.add(buildWater(s, this.tex.uniforms, this.sunDir));
     this.props = new Props(this.field, this.tex.uniforms, quality !== 'low');
     this.scene.add(this.props.root);
-    this.cityMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), this.tex.uniforms, false);
+    this.cityMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), this.tex.uniforms, 'building', quality !== 'low');
 
     this.ringMesh = new THREE.Mesh(
       new THREE.RingGeometry(0.62, 0.72, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.9, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: raw(0xfff2b0), transparent: true, opacity: 0.9, depthWrite: false }),
     );
     this.ringMesh.visible = false;
     this.ringMesh.renderOrder = 3;
@@ -179,6 +186,7 @@ export class GameView {
       const m = o as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
     });
+    this.post?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labels.remove();
@@ -258,6 +266,7 @@ export class GameView {
   resize(): void {
     const w = this.host.clientWidth || window.innerWidth, h = this.host.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h);
+    this.post?.setSize(this.renderer);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.fx.setViewport(h * this.renderer.getPixelRatio(), this.camera.fov);
@@ -704,7 +713,8 @@ export class GameView {
       this.ringMesh.scale.setScalar(1 + Math.sin(time * 5) * 0.05);
     }
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.post) this.post.render(this.renderer, this.scene, this.camera, Math.min(1, Math.max(0, (15 - c.dist) / 8)) * 0.7);
+    else this.renderer.render(this.scene, this.camera);
     this.placeLabels();
   }
 
