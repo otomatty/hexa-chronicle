@@ -1,10 +1,10 @@
 // AIプレイヤーと蛮族の思考。人間と同じ applyAction だけを使って行動する。
-import { BUILDINGS, CIVS, MAP_SIZES, TECHS, UNITS } from './data';
+import { BUILDINGS, CIVS, MAP_SIZES, MARVELS, TECHS, UNITS } from './data';
 import { tilesInRange } from './hex';
 import {
   applyAction, atWar, attackTargets, availableItems, availableTechs, buyCost, canFound, cityAt, citiesOf, cityStrength,
   dist, eraOf, exploreStep, findSpawnTile, isCoastal, isWater, majors, milAt, civAt, militaryPower, rand, spawnUnit,
-  tileYield, unitStrength, unitsOf, validImprovements, cityTiles,
+  tileYield, unitStrength, unitsOf, validImprovements, cityTiles, cityYields,
 } from './game';
 import type { City, GameState, Player, Unit } from './types';
 
@@ -285,10 +285,17 @@ function chooseProduction(s: GameState, p: Player, c: City, ctx: Ctx): void {
   if (!pick && (ctx.atWar || threatened) && nM < milCap && rand(s) < 0.6) pick = militaryPick(s, items, ctx);
   if (!pick) {
     let best: string | undefined, bv = 0;
+    const rank = [...ctx.cities].sort((a, b) => b.pop - a.pop || a.id - b.id).indexOf(c);
+    const prodNow = Math.max(1, cityYields(s, c).prod);
     for (const it of items) {
-      if (it[0] !== 'b') continue;
-      const k = it.slice(2), d = BUILDINGS[k];
+      if (it[0] !== 'b' && it[0] !== 'w') continue;
+      const k = it.slice(2), d = it[0] === 'w' ? MARVELS[k] : BUILDINGS[k];
       let v = d.y.food * (c.pop < 6 ? 1.8 : 1.1) + d.y.prod * 1.5 + d.y.gold * 0.8 + d.y.sci * 1.6 + d.y.cul * (s.turn < 60 ? 1.6 : 0.9);
+      if (it[0] === 'w') {
+        // 世界遺産は、生産力のある上位都市で、現実的なターン数で建つときだけ狙う
+        if (rank > 1 || d.cost / prodNow > 26 || threatened || ctx.atWar) continue;
+        v = v * 1.3 + 1.5;
+      }
       if (k === 'walls') v = threatened || ctx.atWar ? 7 : 1.2;
       const sc = v / Math.pow(d.cost, 0.8);
       if (sc > bv) { bv = sc; best = it; }

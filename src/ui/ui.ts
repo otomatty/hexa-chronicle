@@ -1,11 +1,14 @@
 // HUD とモーダル。DOM を直接組み立てる軽量な実装（フレームワーク不使用）。
-import { BUILDINGS, CIVS, DIFFICULTY, ERAS, FEATURE, IMPROVEMENTS, MAP_SIZES, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, itemName } from '../core/data';
+import { BUILDINGS, CIVS, DIFFICULTY, ERAS, FEATURE, IMPROVEMENTS, MAP_SIZES, MARVELS, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, itemName } from '../core/data';
 import {
   attackTargets, availableItems, availableTechs, buyCost, canFound, cityAt, citiesOf, cityStrength, cityYields, civAt, eraOf,
   growthCost, itemCost, majors, maxMoves, milAt, militaryPower, tileYield, unitMaintenance, unitStrength, validImprovements,
 } from '../core/game';
 import type { Action, City, GameState, NewGameOptions, Winner, Yields } from '../core/types';
 import type { Quality } from '../render/view';
+import { emblem, LINES, portrait, type Lines, type Mood } from './leaders';
+
+export type Scene = keyof Lines;
 
 export interface Task { label: string; sub: string; kind: 'end' | 'task' | 'busy'; run(): void }
 
@@ -22,7 +25,8 @@ export interface GameApi {
   setPerf(on: boolean): void;
   setAutoScale(on: boolean): void;
   perfStats(): { fps: number; ms: number; calls: number; tris: number; scale: number };
-  act(a: Action): boolean;
+  /** quiet: 失敗しても通知を出さない */
+  act(a: Action, quiet?: boolean): boolean;
   selectUnit(id: number): void;
   selectCity(id: number): void;
   deselect(): void;
@@ -70,6 +74,7 @@ function unlocks(tech: string): string[] {
   const out: string[] = [];
   for (const k in UNITS) if (UNITS[k].tech === tech) out.push(UNITS[k].name);
   for (const k in BUILDINGS) if (BUILDINGS[k].tech === tech) out.push(BUILDINGS[k].name);
+  for (const k in MARVELS) if (MARVELS[k].tech === tech) out.push('✦' + MARVELS[k].name);
   for (const k in IMPROVEMENTS) {
     if (IMPROVEMENTS[k].tech === tech) out.push(IMPROVEMENTS[k].name);
     if (IMPROVEMENTS[k].boostTech === tech) out.push(IMPROVEMENTS[k].name + '強化');
@@ -92,6 +97,7 @@ function itemInfo(item: string): { icon: string; desc: string } {
     return { icon: d.icon, desc: parts.join('・') };
   }
   if (item[0] === 'b') return { icon: '🏛️', desc: BUILDINGS[k].desc };
+  if (item[0] === 'w') return { icon: '✦', desc: MARVELS[k].desc };
   return { icon: k === 'wealth' ? '💰' : '🚀', desc: PROJECTS[k].desc };
 }
 
@@ -181,6 +187,14 @@ export class Hud {
         break;
       }
       case 'peace': if (api.act({ type: 'makePeace', target: Number(v) })) this.showDiplo(); break;
+      case 'leader': this.showLeader(Number(v), 'talk'); break;
+      case 'l-peace': this.showLeader(Number(v), api.act({ type: 'makePeace', target: Number(v) }, true) ? 'peace' : 'refuse'); break;
+      case 'l-accept': this.modal.dataset.lock = ''; if (api.act({ type: 'makePeace', target: Number(v) })) this.showLeader(Number(v), 'peace'); else this.closeModal(); break;
+      case 'l-war': {
+        const o = s.players[Number(v)];
+        this.confirm(`${o.name}に宣戦布告しますか？`, () => { if (api.act({ type: 'declareWar', target: o.id })) this.showLeader(o.id, 'attacked'); });
+        break;
+      }
       case 'save': api.saveLocal(); break;
       case 'load': this.closeModal(); api.loadLocal(); break;
       case 'csave': api.cloudSave(); break;
@@ -289,16 +303,17 @@ export class Hud {
       c.queue.forEach((q, i) => { h += `<div class="q"><span>${i + 1}.</span><span class="nm">${itemName(q)}</span><button data-a="c-remove" data-v="${i}">×</button></div>`; });
       h += '</div>';
     }
+    if (c.marvels.length) h += `<div class="sec">世界遺産</div><div class="chips">${c.marvels.map((b) => `<span class="chip gold">✦ ${MARVELS[b].name}</span>`).join('')}</div>`;
     if (c.buildings.length) h += `<div class="sec">建造物</div><div class="chips">${c.buildings.map((b) => `<span class="chip">${BUILDINGS[b].name}</span>`).join('')}</div>`;
     const items = availableItems(s, c);
     const group = (title: string, prefix: string) => {
-      const list = items.filter((i) => i[0] === prefix && !(prefix === 'b' && c.queue.includes(i)));
+      const list = items.filter((i) => i[0] === prefix && !((prefix === 'b' || prefix === 'w') && c.queue.includes(i)));
       if (!list.length) return;
       h += `<div class="sec">${title}</div>`;
       for (const it of list.sort((a, b) => itemCost(s, c, a) - itemCost(s, c, b))) {
         const info = itemInfo(it), cost = itemCost(s, c, it);
         const bc = buyCost(s, c, it);
-        const buy = it[0] !== 'p' ? `<button class="btn mini" data-a="c-buy" data-v="${it}" ${p.gold >= bc && !api.busy ? '' : 'disabled'} title="ゴールドで即時購入">💰${bc}</button>` : '';
+        const buy = it[0] !== 'p' && it[0] !== 'w' ? `<button class="btn mini" data-a="c-buy" data-v="${it}" ${p.gold >= bc && !api.busy ? '' : 'disabled'} title="ゴールドで即時購入">💰${bc}</button>` : '';
         const add = `<button class="btn mini" data-a="c-queue" data-v="${it}" title="キューの最後に追加">＋</button>`;
         h += `<div class="item" data-a="c-build" data-v="${it}"><span>${info.icon}</span><span class="nm">${itemName(it)}<small>${info.desc}</small></span>
           <span class="t">${it === 'p:wealth' ? '' : `⚙️${cost}・${turnsFor(it)}T`}</span>${add}${buy}</div>`;
@@ -306,6 +321,7 @@ export class Hud {
     };
     group('ユニット', 'u');
     group('建造物', 'b');
+    group('世界遺産', 'w');
     group('プロジェクト', 'p');
     el.innerHTML = h + '</div>';
     el.querySelector('.body')!.scrollTop = keep;
@@ -442,7 +458,57 @@ export class Hud {
     this.modal.innerHTML = `<div class="dlg"><header><h2>${title}</h2>${lock ? '' : '<button class="x" data-a="close">×</button>'}</header><div class="c">${body}</div></div>`;
     this.modal.classList.add('on');
   }
-  closeModal(): void { this.modal.classList.remove('on'); this.modal.innerHTML = ''; }
+  closeModal(): void {
+    this.modal.classList.remove('on');
+    this.modal.innerHTML = '';
+    this.runScenes();
+  }
+
+  // ---------------------------------------------------------------- 指導者との会見
+  private scenes: (() => void)[] = [];
+
+  /** 会見などの場面を順番待ちに入れる。他文明の手番中や別の画面が開いている間は待つ */
+  queueScene(fn: () => void): void {
+    this.scenes.push(fn);
+    this.runScenes();
+  }
+  runScenes(): void {
+    if (this.modalOpen || this.api.busy || !this.scenes.length) return;
+    this.scenes.shift()!();
+  }
+
+  showLeader(pid: number, scene: Scene): void {
+    const api = this.api, s = api.state, me = api.human, o = s.players[pid], mine = s.players[me];
+    if (!o || o.barb) return;
+    const war = s.war[me][pid];
+    const mood: Mood = scene === 'war' || scene === 'attacked' || scene === 'refuse' ? 'angry' : scene === 'peace' || scene === 'greet' ? 'happy' : war ? 'angry' : 'neutral';
+    const myPow = militaryPower(s, me), pow = militaryPower(s, pid);
+    const truce = !war && s.turn < s.truce[me][pid];
+    const attitude = !o.alive ? '滅亡' : war ? '敵対' : truce ? '休戦中' : pow > myPow * 1.4 && CIVS[o.civ].aggr > 0.6 ? '威圧的' : pow < myPow * 0.7 ? '慎重' : '友好的';
+    const cmp = (label: string, a: number, b: number) => {
+      const w = a + b > 0 ? (a / (a + b)) * 100 : 50;
+      return `<div class="cb"><span>${label}</span><i><u style="width:${w}%;background:${mine.color}"></u><u style="width:${100 - w}%;background:${o.color}"></u></i><em>${Math.round(a)} : ${Math.round(b)}</em></div>`;
+    };
+    let acts = '';
+    if (scene === 'offer') acts = `<button class="btn pri" data-a="l-accept" data-v="${pid}">和平を受け入れる</button><button class="btn" data-a="close">断る</button>`;
+    else {
+      if (o.alive && !api.busy && scene !== 'greet') {
+        if (war) acts += `<button class="btn" data-a="l-peace" data-v="${pid}">和平を提案</button>`;
+        else if (!truce) acts += `<button class="btn danger" data-a="l-war" data-v="${pid}">宣戦布告</button>`;
+      }
+      acts += `<button class="btn" data-a="diplo">情勢を見る</button><button class="btn pri" data-a="close">${scene === 'greet' ? '会見を終える' : '閉じる'}</button>`;
+    }
+    const titles: Record<Scene, string> = { greet: '初めての会見', talk: '会見', war: '宣戦布告', attacked: '開戦', peace: '和平成立', refuse: '和平拒否', offer: '和平の申し入れ' };
+    this.open(titles[scene], `<div class="leader" style="--c:${o.color};--c2:${o.color2}">
+      <div class="pic">${portrait(o.civ, mood, 230)}<div class="plate">${emblem(o.civ, 38)}<div><b>${o.leader}</b><small>${o.name}</small></div></div></div>
+      <div class="info">
+        <div class="speech">「${LINES[o.civ]?.[scene] ?? ''}」</div>
+        <div class="rel"><span class="tag ${war ? 'war' : 'peace'}">${war ? '戦争中' : '平和'}</span><span class="tag">態度: ${attitude}</span>${truce ? `<span class="tag">休戦 あと${s.truce[me][pid] - s.turn}T</span>` : ''}</div>
+        ${cmp('軍事力', myPow, pow)}${cmp('技術', mine.techs.length, o.techs.length)}${cmp('都市', citiesOf(s, me).length, citiesOf(s, pid).length)}${cmp('スコア', mine.score, o.score)}
+        <div class="bonus">特性: ${CIVS[o.civ].bonusDesc}${o.spaceStage ? `　宇宙開発 ${o.spaceStage}/3` : ''}</div>
+        <div class="acts" style="justify-content:flex-end">${acts}</div>
+      </div></div>`, scene === 'offer');
+  }
 
   confirm(text: string, yes: () => void): void {
     this.open('確認', `<p style="margin:0 0 16px">${text}</p><div class="acts" style="justify-content:flex-end"><button class="btn" id="cno">いいえ</button><button class="btn pri" id="cyes">はい</button></div>`);
@@ -490,7 +556,8 @@ export class Hud {
         else if (s.turn >= s.truce[me][o.id]) btn = `<button class="btn danger" data-a="war" data-v="${o.id}">宣戦布告</button>`;
         else btn = `<span class="tag">休戦中（あと${s.truce[me][o.id] - s.turn}T）</span>`;
       }
-      h += `<div class="civrow"><div class="dot" style="--c:${o.color};--c2:${o.color2}"></div>
+      if (!self && met && o.alive) btn = `<button class="btn" data-a="leader" data-v="${o.id}">会見</button>` + btn;
+      h += `<div class="civrow">${met ? emblem(o.civ, 40) : `<div class="dot" style="--c:#333;--c2:#555"></div>`}
         <div class="nm"><b>${met ? o.name : '？？？'}</b><small>${met ? `${o.leader}・都市${citiesOf(s, o.id).length}・技術${o.techs.length}・スコア${o.score}${self ? '' : '・' + rel}` : 'まだ出会っていない文明'}</small>
         ${met ? `<small>${CIVS[o.civ].bonusDesc}${o.spaceStage ? `・宇宙開発 ${o.spaceStage}/3` : ''}</small>` : ''}</div>${tag}${btn}</div>`;
     }
@@ -527,6 +594,19 @@ export class Hud {
       <b style="color:var(--text)">素材</b><br>建物・樹木・岩の一部に KayKit Medieval Hexagon Pack（Kay Lousberg 作、CC0）を使用しています。</div>`);
   }
 
+  /** 世界遺産の完成を、上下に帯を入れた映画風の画面で見せる */
+  showMarvel(key: string, cityName: string, done: () => void): void {
+    const d = MARVELS[key];
+    const el = document.createElement('div');
+    el.id = 'cine';
+    el.innerHTML = `<div class="bar top"><span>世界遺産 完成</span></div>
+      <div class="bar bottom"><h2>✦ ${d.name}</h2><p class="quote">「${d.quote}」</p><p>${cityName}・${d.desc}</p><small>クリックで閉じる</small></div>`;
+    const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 450); window.removeEventListener('keydown', close); done(); };
+    el.addEventListener('click', close);
+    window.addEventListener('keydown', close);
+    this.root.appendChild(el);
+  }
+
   showEnd(w: Winner | null, defeated: boolean): void {
     const s = this.api.state;
     const kinds = { domination: '制覇勝利', science: '科学勝利', score: 'スコア勝利' };
@@ -534,7 +614,7 @@ export class Hud {
     const title = win ? `🏆 ${kinds[w!.kind]}` : defeated && !w ? '文明は滅亡した…' : '敗北';
     let h = `<p style="font:16px var(--display);margin:0 0 12px">${w ? `${s.players[w.player].name} が${kinds[w.kind]}を達成しました。` : 'あなたの文明は歴史から姿を消しました。'}</p>`;
     for (const o of majors(s).sort((a, b) => b.score - a.score)) {
-      h += `<div class="civrow"><div class="dot" style="--c:${o.color};--c2:${o.color2}"></div><div class="nm"><b>${o.name}</b><small>都市${citiesOf(s, o.id).length}・技術${o.techs.length}</small></div><span class="tag">${o.score} 点</span></div>`;
+      h += `<div class="civrow">${emblem(o.civ, 40)}<div class="nm"><b>${o.name}</b><small>都市${citiesOf(s, o.id).length}・技術${o.techs.length}</small></div><span class="tag">${o.score} 点</span></div>`;
     }
     h += '<div class="acts" style="justify-content:flex-end;margin-top:14px"><button class="btn pri" id="tt">タイトルへ</button></div>';
     this.open(title, h, true);
@@ -557,6 +637,7 @@ export function showTitle(host: HTMLElement, o: { hasSave: boolean; onNew(opts: 
     const civOpts = Object.entries(CIVS).map(([k, c]) => `<option value="${k}">${c.name}（${c.leader}）</option>`).join('');
     const box = host.querySelector('.box')!;
     box.innerHTML = `<div class="dlg" style="text-align:left"><header><h2>新しいゲーム</h2></header><div class="c"><div class="form">
+      <div id="n-pic" style="grid-column:1 / -1;display:flex;gap:16px;align-items:center"></div>
       <label>文明</label><select id="n-civ">${civOpts}</select><div class="note" id="n-desc"></div>
       <label>マップ</label><select id="n-size">${Object.entries(MAP_SIZES).map(([k, m]) => `<option value="${k}" ${k === 'standard' ? 'selected' : ''}>${m.name}（${m.w}×${m.h}・最大${m.players}文明）</option>`).join('')}</select>
       <label>対戦相手</label><select id="n-opp"></select>
@@ -565,7 +646,11 @@ export function showTitle(host: HTMLElement, o: { hasSave: boolean; onNew(opts: 
       </div><div class="acts" style="justify-content:flex-end;margin-top:18px"><button class="btn" id="n-back">戻る</button><button class="btn pri" id="n-go">ゲーム開始</button></div></div></div>`;
     const $ = <T extends HTMLElement>(id: string) => box.querySelector<T>('#' + id)!;
     const civ = $<HTMLSelectElement>('n-civ'), size = $<HTMLSelectElement>('n-size'), opp = $<HTMLSelectElement>('n-opp');
-    const desc = () => { $('n-desc').textContent = '特性: ' + CIVS[civ.value].bonusDesc; };
+    const desc = () => {
+      const c = CIVS[civ.value];
+      $('n-desc').textContent = '特性: ' + c.bonusDesc;
+      $('n-pic').innerHTML = `${portrait(civ.value, 'happy', 120)}<div><b style="font:700 18px var(--display);color:var(--gold)">${c.leader}</b><div style="color:var(--dim)">${c.name}</div><div class="help" style="margin-top:6px">「${LINES[civ.value].talk}」</div></div>`;
+    };
     const opps = () => {
       const max = MAP_SIZES[size.value].players - 1;
       opp.innerHTML = Array.from({ length: max }, (_, i) => `<option value="${i + 1}" ${i + 1 === max ? 'selected' : ''}>${i + 1} 文明</option>`).join('');

@@ -1,6 +1,7 @@
 // ユニットと都市のプロシージャルモデル。外部アセットを使わず、プリミティブの組み合わせで作る。
 import * as THREE from 'three';
 import { ball, box, cone, cyl, group, hash, merge, ring, tag, xf } from './geo';
+import { civicHall, factory, marvelParts, office, PAL, skyscraper, tenement, townhouse } from './builds';
 import { hasPack, packGeo } from './pack';
 
 type Geo = THREE.BufferGeometry;
@@ -251,6 +252,32 @@ export function cityGeometry(look: CityLook): Geo {
     addWalls(p, look, TOP);
     return merge(p);
   }
+  if (hasPack()) {
+    // 産業時代以降：パックの作法に合わせて組んだ町家・集合住宅・オフィス・高層ビル
+    const put = (parts: Geo[], x: number, z: number, ry: number, sc = 1) => p.push(...group(parts, { x, y: TOP, z, ry, sx: sc, sy: sc, sz: sc }));
+    const modern = era >= 5;
+    if (modern) put(skyscraper(seed, look.capital ? 0.95 : 0.7, c1), 0, 0, hash(seed, 1) * 1.5, look.capital ? 1.05 : 0.9);
+    else put(civicHall(c1, c2), 0, 0, hash(seed, 1) * 6.28, look.capital ? 0.95 : 0.78);
+    const n = Math.min(13, 4 + look.pop);
+    for (let k = 0; k < n; k++) {
+      const inner = k < 6;
+      const a = ((inner ? k : k - 6) / (inner ? 6 : 7)) * Math.PI * 2 + hash(seed, k) * 0.3 + (inner ? 0.5 : 0.2);
+      const r = (inner ? 0.4 : 0.6) + hash(seed, k + 50) * 0.04;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r, ry = -a + Math.PI / 2, h = hash(seed, k + 20);
+      if (modern) {
+        if (h < 0.3 + (era - 5) * 0.2 && look.pop >= 8 && inner) put(skyscraper(seed + k, 0.45 + hash(seed, k + 60) * 0.3, c1), x, z, ry, 0.72);
+        else if (h < 0.7) put(office(seed + k, 2 + Math.floor(hash(seed, k + 40) * 3), c1), x, z, ry, 0.82);
+        else if (h < 0.88) put(tenement(seed + k), x, z, ry, 0.85);
+        else put(townhouse(c1, seed + k), x, z, ry, 0.85);
+      } else if (h < 0.3) p.push(xf(packGeo(h < 0.15 ? 'home_A' : 'home_B', 0.19, c1), { x, y: TOP, z, ry }));
+      else if (h < 0.72) put(townhouse(c1, seed + k), x, z, ry, 0.9);
+      else put(tenement(seed + k), x, z, ry, 0.85);
+    }
+    const fy = modern ? (look.capital ? 1.42 : 1.0) : look.capital ? 0.72 : 0.6;
+    p.push(cyl(0.008, 0.008, 0.2, 4, DARK, { y: fy }), box(0.14, 0.08, 0.01, c1, { x: 0.07, y: fy + 0.06 }), box(0.14, 0.02, 0.012, c2, { x: 0.07, y: fy + 0.06 }));
+    addWalls(p, look, TOP);
+    return merge(p);
+  }
   const wallCol = era >= 4 ? 0xb9a089 : era >= 2 ? 0xd9cfb8 : 0xcdb891;
   const roofs = [c1, 0x9a4a32, 0x7a5a3a, c2];
   // 中心の建物
@@ -293,7 +320,7 @@ export function cityGeometry(look: CityLook): Geo {
 }
 
 // ---------------------------------------------------------------- 区域（都市の周囲に広がる専門地区）
-export type DistrictKind = 'campus' | 'commerce' | 'industry' | 'culture' | 'harbor';
+export type DistrictKind = 'campus' | 'commerce' | 'industry' | 'culture' | 'harbor' | 'marvel';
 
 /** 柱の並ぶ建物（銀行・博物館など） */
 function colonnade(w: number, d: number, h: number, wall: number, roof: number, t: { x: number; z: number; ry: number }): Geo[] {
@@ -308,7 +335,8 @@ function colonnade(w: number, d: number, h: number, wall: number, roof: number, 
  * 区域のモデル。level は該当する建造物の数（多いほど建物が増える）。
  * 戻り値の smoke は煙突の位置（モデル座標）。
  */
-export function districtGeometry(kind: DistrictKind, level: number, era: number, c1: number, c2: number): { geo: Geo; smoke: [number, number, number][] } {
+export function districtGeometry(kind: DistrictKind, level: number, era: number, c1: number, c2: number, key = ''): { geo: Geo; smoke: [number, number, number][] } {
+  if (kind === 'marvel') return { geo: merge(marvelParts(key, c1, c2)), smoke: [] };
   const p: Geo[] = [];
   const smoke: [number, number, number][] = [];
   const T = 0.04;
@@ -327,8 +355,8 @@ export function districtGeometry(kind: DistrictKind, level: number, era: number,
       p.push(...group(house(0.22, 0.17, 0.2, wall, blue, 0, 0, 0, 0), { x: 0.34, y: T, z: -0.24, ry: -0.5 }));
       p.push(cyl(0.085, 0.09, 0.12, 10, wall, { x: 0.38, y: T + 0.06, z: 0.2 }), ball(0.085, 0xe9edf2, { x: 0.38, y: T + 0.12, z: 0.2, sy: 0.8 }, 10, 6), box(0.02, 0.02, 0.1, 0x3a3f4a, { x: 0.38, y: T + 0.2, z: 0.23, rx: -0.6 }));
     }
-    if (level >= 3) p.push(box(0.2, 0.26, 0.16, 0xa9c4dc, { x: 0.02, y: T + 0.13, z: -0.44 }), box(0.21, 0.02, 0.17, 0x6f8fae, { x: 0.02, y: T + 0.27, z: -0.44 }));
-    if (level >= 4) p.push(cyl(0.05, 0.065, 0.5, 8, 0xb8cfe2, { x: -0.05, y: T + 0.25, z: 0.44 }), cyl(0.004, 0.004, 0.2, 4, 0x3a3f4a, { x: -0.05, y: T + 0.6, z: 0.44 }), ball(0.03, 0xd9432b, { x: -0.05, y: T + 0.7, z: 0.44 }, 5, 4));
+    if (level >= 3) p.push(...group(office(11, 3, 0x3f6fb5), { x: 0.02, y: T, z: -0.44, sx: 0.95, sz: 0.95 }));
+    if (level >= 4) p.push(...group(skyscraper(13, 0.55, 0x3f6fb5), { x: -0.08, y: T, z: 0.42, sx: 0.8, sz: 0.8 }));
     p.push(cyl(0.01, 0.01, 0.2, 4, 0x3a3f4a, { x: 0.22, y: T + 0.1, z: 0.44 }), box(0.1, 0.06, 0.01, blue, { x: 0.27, y: T + 0.17, z: 0.44 }));
   } else if (kind === 'commerce' && hasPack()) {
     p.push(xf(packGeo('market', 0.4, c1), { x: -0.08, y: T, z: -0.14, ry: 0.4 }), xf(packGeo('barrel', 0.5), { x: 0.36, y: T, z: 0.2 }), xf(packGeo('crate', 0.5), { x: 0.3, y: T, z: 0.36, ry: 0.5 }), xf(packGeo('sack', 0.6), { x: -0.38, y: T, z: 0.3 }));
@@ -347,18 +375,14 @@ export function districtGeometry(kind: DistrictKind, level: number, era: number,
     p.push(xf(packGeo('blacksmith', 0.36, c1), { x: -0.12, y: T, z: -0.12, ry: 0.5 }), xf(packGeo('lumber', 0.5), { x: 0.36, y: T, z: 0.22 }), xf(packGeo('stone', 0.5), { x: -0.3, y: T, z: 0.38 }));
     smoke.push([-0.12, T + 0.45, -0.12]);
   } else if (kind === 'industry') {
-    p.push(...group(house(0.3, 0.14, 0.2, 0x9a7a5a, 0x5a4638, 0, 0, 0, 0), { x: -0.3, y: T, z: -0.24, ry: 0.4 }));
-    p.push(box(0.1, 0.05, 0.1, 0x4a4038, { x: -0.38, y: T + 0.025, z: 0.2 }), box(0.14, 0.04, 0.08, 0x8b6a42, { x: -0.2, y: T + 0.02, z: 0.36, ry: 0.4 }));
-    if (level >= 2) {
-      p.push(box(0.34, 0.2, 0.22, 0x9a5a48, { x: 0.3, y: T + 0.1, z: -0.24 }));
-      for (let k = 0; k < 3; k++) p.push(box(0.1, 0.05, 0.225, 0x6a4a40, { x: 0.19 + k * 0.11, y: T + 0.215, z: -0.24, rz: 0.5 }));
-      for (const [x, z, hh] of [[0.2, -0.05, 0.46], [0.36, -0.03, 0.38]] as const) {
-        p.push(cyl(0.028, 0.04, hh, 8, 0x7a4a3c, { x, y: T + hh / 2, z }), cyl(0.032, 0.032, 0.02, 8, 0x3a3432, { x, y: T + hh, z }));
-        smoke.push([x, T + hh + 0.05, z]);
-      }
-    } else smoke.push([-0.3, T + 0.3, -0.24]);
+    // 工房 → 工場 → 発電所と、建造物が増えるほど大きくなる
+    const f = factory(c1, level >= 2);
+    p.push(...group(f.parts, { x: -0.06, y: T, z: -0.14, ry: 0.35 }));
+    const m4 = new THREE.Matrix4().makeRotationY(0.35);
+    for (const sm of f.smoke) { const v = new THREE.Vector3(sm[0], sm[1], sm[2]).applyMatrix4(m4); smoke.push([v.x - 0.06, v.y + T, v.z - 0.14]); }
+    p.push(box(0.1, 0.05, 0.1, PAL.woodDark, { x: 0.36, y: T + 0.025, z: 0.3 }), box(0.14, 0.04, 0.08, PAL.wood, { x: -0.3, y: T + 0.02, z: 0.36, ry: 0.4 }));
     if (level >= 3) {
-      p.push(cyl(0.085, 0.13, 0.3, 10, 0xc4c6c8, { x: 0.3, y: T + 0.15, z: 0.34 }), cyl(0.07, 0.085, 0.06, 10, 0xb0b3b6, { x: 0.3, y: T + 0.33, z: 0.34 }));
+      p.push(cyl(0.085, 0.13, 0.3, 10, PAL.concrete, { x: 0.3, y: T + 0.15, z: 0.34 }), cyl(0.07, 0.085, 0.06, 10, PAL.concreteDark, { x: 0.3, y: T + 0.33, z: 0.34 }), cyl(0.132, 0.132, 0.014, 10, c1, { x: 0.3, y: T + 0.06, z: 0.34 }));
       smoke.push([0.3, T + 0.42, 0.34]);
     }
   } else if (kind === 'culture') {

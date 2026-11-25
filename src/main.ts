@@ -1,13 +1,15 @@
 // クライアントのエントリーポイント。ゲーム状態・3Dビュー・HUD を仲介する。
 import { runAI } from './core/ai';
-import { CIVS, PROJECTS, TECHS, UNITS, WONDERS, itemName } from './core/data';
+import { CIVS, MARVELS, PROJECTS, TECHS, UNITS, WONDERS, itemName } from './core/data';
 import {
   applyAction, attackTargets, availableTechs, cityAt, citiesOf, createGame, deserialize, dist, milAt, needsOrders, reachable,
   serialize, unitsOf,
 } from './core/game';
 import type { Action, GameEvent, GameState, NewGameOptions } from './core/types';
+import { planDistricts } from './render/districts';
 import { loadPack, setPackEnabled } from './render/pack';
 import { GameView, type Quality } from './render/view';
+import { portrait } from './ui/leaders';
 import { cityLabelInfo, Hud, showTitle, type GameApi, type Task } from './ui/ui';
 
 const K_AUTO = 'hexa.autosave', K_SLOT = 'hexa.save', K_CLOUD = 'hexa.cloudId', K_PREFS = 'hexa.prefs';
@@ -99,10 +101,10 @@ class Game implements GameApi {
   }
 
   // ---------------------------------------------------------------- アクション
-  act(a: Action): boolean {
+  act(a: Action, quiet = false): boolean {
     if (this.busy || this.ended) return false;
     const r = applyAction(this.state, this.human, a);
-    if (!r.ok && r.error) this.hud.toast(r.error, 'war');
+    if (!r.ok && r.error && !quiet) this.hud.toast(r.error, 'war');
     this.flush();
     if (r.ok && a.type !== 'endTurn') this.afterAction();
     return r.ok;
@@ -127,12 +129,23 @@ class Game implements GameApi {
     const name = (pid: number) => s.players[pid].name;
     switch (e.type) {
       case 'tech': if (e.owner === me) hud.toast(`🔬 「${TECHS[e.tech].name}」の研究が完了しました`, 'good'); break;
-      case 'built': if (e.owner === me) hud.toast(`⚙️ ${s.cities[e.city]?.name ?? ''}で「${itemName(e.item)}」が完成しました`, 'good', s.cities[e.city]?.pos); break;
+      case 'marvel': {
+        const c = s.cities[e.city];
+        if (e.owner === me && c) {
+          const tile = planDistricts(s, c).find((d) => d.key === e.marvel)?.tile ?? c.pos;
+          this.view.showcase(tile);
+          hud.showMarvel(e.marvel, c.name, () => this.view.endShowcase());
+        } else hud.toast(`✦ ${name(e.owner)}が世界遺産「${MARVELS[e.marvel].name}」を完成させました`, 'war', s.met[me][e.owner] && c ? c.pos : -1);
+        break;
+      }
+      case 'built': if (e.owner === me && e.item[0] !== 'w') hud.toast(`⚙️ ${s.cities[e.city]?.name ?? ''}で「${itemName(e.item)}」が完成しました`, 'good', s.cities[e.city]?.pos); break;
       case 'cityFounded': if (e.owner !== me && s.vis[me][e.pos]) hud.toast(`${name(e.owner)}が都市「${s.cities[e.city].name}」を建設しました`, '', e.pos); break;
-      case 'war': hud.toast(e.a === me || e.b === me ? `⚔️ ${name(e.a)}が${name(e.b)}に宣戦布告しました！` : `${name(e.a)}が${name(e.b)}に宣戦布告しました`, e.a === me || e.b === me ? 'war' : ''); break;
+      case 'war':
+        if (e.b === me && !s.players[e.a].human) hud.queueScene(() => hud.showLeader(e.a, 'war'));
+        hud.toast(e.a === me || e.b === me ? `⚔️ ${name(e.a)}が${name(e.b)}に宣戦布告しました！` : `${name(e.a)}が${name(e.b)}に宣戦布告しました`, e.a === me || e.b === me ? 'war' : ''); break;
       case 'peace': hud.toast(`🕊️ ${name(e.a)}と${name(e.b)}が和平を結びました`, 'good'); break;
-      case 'peaceOffer': if (e.to === me) hud.toast(`🕊️ ${name(e.from)}が和平を提案しています`, 'good', -1, { label: '受け入れる', run: () => this.act({ type: 'makePeace', target: e.from }) }); break;
-      case 'met': if (e.a === me || e.b === me) { const o = e.a === me ? e.b : e.a; hud.toast(`🤝 ${name(o)}（${s.players[o].leader}）と接触しました`); } break;
+      case 'peaceOffer': if (e.to === me) hud.queueScene(() => { if (s.war[me][e.from]) hud.showLeader(e.from, 'offer'); else hud.runScenes(); }); break;
+      case 'met': if (e.a === me || e.b === me) { const o = e.a === me ? e.b : e.a; hud.queueScene(() => hud.showLeader(o, 'greet')); } break;
       case 'cityCaptured': if (e.from === me || e.to === me || s.vis[me][e.pos]) hud.toast(`🔥 ${name(e.to)}が都市「${s.cities[e.city].name}」を占領しました`, e.to === me ? 'good' : 'war', e.pos); break;
       case 'eliminated': hud.toast(`☠️ ${name(e.player)}が滅亡しました`, 'war'); break;
       case 'space': hud.toast(`🚀 ${name(e.owner)}が「${Object.values(PROJECTS).find((p) => p.stage === e.stage - 1)?.name}」を達成しました（${e.stage}/3）`, e.owner === me ? 'good' : 'war'); break;
@@ -328,8 +341,9 @@ class Game implements GameApi {
     if (!s.players[this.human].alive || s.winner) { this.flush(); this.finish(); return; }
     store.set(K_AUTO, serialize(s));
     this.flush();
-    this.selectNext(true);
+    this.selectNext(!this.view.showcasing);
     this.hud.update();
+    this.hud.runScenes();
   }
 
   // ---------------------------------------------------------------- その他
@@ -406,6 +420,7 @@ function start(state: GameState): void {
     hudEl.innerHTML = '';
     game = new Game(state);
     (window as unknown as { __game: Game }).__game = game;
+    (window as unknown as { __portrait: typeof portrait }).__portrait = portrait;
     loading(false);
   }, 40));
 }

@@ -1,6 +1,6 @@
 // 3Dビュー全体：レンダラー、カメラ操作、ユニット／都市の表示、ラベル、ピッキング、演出。
 import * as THREE from 'three';
-import { UNITS, WONDERS } from '../core/data';
+import { MARVELS, UNITS, WONDERS } from '../core/data';
 import { cityAt, civAt, eraOf, isEmbarked, milAt } from '../core/game';
 import { HEX, SQ3, worldToTile } from '../core/hex';
 import type { GameEvent, GameState } from '../core/types';
@@ -49,6 +49,7 @@ interface CityView {
   pos: number;
   districts: THREE.Mesh[];
   districtSig: string;
+  marvelLabels: { el: HTMLDivElement; tile: number }[];
 }
 interface Shot { mesh: THREE.Mesh; a: THREE.Vector3; b: THREE.Vector3; t: number; arc: number; heavy: boolean; done: () => void }
 interface Emitter { x: number; y: number; z: number; tile: number; dark: boolean }
@@ -90,6 +91,7 @@ export class GameView {
   private parity = false;
   private shadowAt = { x: 1e9, z: 1e9, d: 0 };
   private shadowDirty = true;
+  private orbit = false;
   private labelSig = '';
   private labelsDirty = true;
   selectedUnit = 0;
@@ -398,6 +400,18 @@ export class GameView {
     this.cam.gz = this.field.tz(tile);
     if (instant) { this.cam.tx = this.cam.gx; this.cam.tz = this.cam.gz; }
   }
+  /** 完成した世界遺産などを見せる演出：近づいて、ゆっくり回り込む */
+  showcase(tile: number): void {
+    this.focus(tile);
+    this.cam.gd = 9.5;
+    this.orbit = true;
+    const p = this.tilePos(tile);
+    this.later(500, () => { this.fx.confetti(p.x, p.y + 1.0, p.z, [0xe2c36b, 0xfff2b0]); this.fx.sparks(p.x, p.y + 1.2, p.z); });
+    this.later(1100, () => this.fx.confetti(p.x, p.y + 1.2, p.z, [0xe2c36b, 0xffffff]));
+  }
+  endShowcase(): void { this.orbit = false; }
+  get showcasing(): boolean { return this.orbit; }
+
   focusWorld(x: number, z: number): void { this.cam.gx = x; this.cam.gz = z; this.clampTarget(); }
   setGrid(on: boolean): void { this.tex.uniforms.uGrid.value = on ? 1 : 0; }
 
@@ -472,7 +486,7 @@ export class GameView {
         mesh.castShadow = mesh.receiveShadow = true;
         this.tilePos(c.pos, mesh.position);
         this.scene.add(mesh);
-        cv = { mesh, label, sig: '', labelSig: '', pos: c.pos, districts: [], districtSig: '' };
+        cv = { mesh, label, sig: '', labelSig: '', pos: c.pos, districts: [], districtSig: '', marvelLabels: [] };
         this.cities.set(c.id, cv);
       }
       cv.mesh.visible = true;
@@ -499,7 +513,9 @@ export class GameView {
 
   private clearDistricts(cv: CityView, cityId: number): void {
     for (const m of cv.districts) { this.scene.remove(m); m.geometry.dispose(); }
+    for (const l of cv.marvelLabels) l.el.remove();
     cv.districts = [];
+    cv.marvelLabels = [];
     this.emitters.delete(cityId);
   }
 
@@ -508,13 +524,13 @@ export class GameView {
     const c = s.cities[cityId], p = s.players[c.owner];
     const era = eraOf(p);
     const plan = planDistricts(s, c);
-    const sig = c.owner + ':' + era + ':' + plan.map((d) => d.kind + d.level + '@' + d.tile).join(',');
+    const sig = c.owner + ':' + era + ':' + plan.map((d) => d.kind + d.level + (d.key ?? '') + '@' + d.tile).join(',');
     if (sig === cv.districtSig) return;
     cv.districtSig = sig;
     this.clearDistricts(cv, cityId);
     const ems: Emitter[] = [];
     for (const d of plan) {
-      const { geo, smoke } = districtGeometry(d.kind, d.level, era, colorNum(p.color), colorNum(p.color2));
+      const { geo, smoke } = districtGeometry(d.kind, d.level, era, colorNum(p.color), colorNum(p.color2), d.key);
       const mesh = new THREE.Mesh(geo, this.cityMat);
       mesh.castShadow = mesh.receiveShadow = true;
       if (d.kind === 'harbor') {
@@ -524,7 +540,14 @@ export class GameView {
         mesh.rotation.y = Math.atan2(tx - cx, tz - cz);
       } else {
         this.tilePos(d.tile, mesh.position);
-        mesh.rotation.y = hash(cityId, d.tile + 3) * 6.28;
+        mesh.rotation.y = d.kind === 'marvel' ? Math.floor(hash(cityId, d.tile + 3) * 6) * (Math.PI / 3) : hash(cityId, d.tile + 3) * 6.28;
+      }
+      if (d.kind === 'marvel' && d.key) {
+        const el = document.createElement('div');
+        el.className = 'wlabel';
+        el.textContent = '✦ ' + MARVELS[d.key].name;
+        this.labels.appendChild(el);
+        cv.marvelLabels.push({ el, tile: d.tile });
       }
       mesh.updateMatrixWorld();
       for (const sm of smoke) {
@@ -720,6 +743,7 @@ export class GameView {
       c.gz += (-mx * sn + mz * cs) * pan;
       this.clampTarget();
     }
+    if (this.orbit) { c.gyaw += dt * 0.16; this.lastInput = performance.now(); }
     if (k.has('q')) c.gyaw += dt * 1.6;
     if (k.has('e')) c.gyaw -= dt * 1.6;
     const ease = 1 - Math.exp(-dt * 10);
@@ -874,6 +898,12 @@ export class GameView {
       if (!cv.mesh.visible) continue;
       const p = cv.mesh.position;
       put(cv.label, p.x, p.y + 1.5, p.z);
+    }
+    for (const cv of this.cities.values()) {
+      for (const ml of cv.marvelLabels) {
+        if (far || !cv.mesh.visible) { if (ml.el.style.display !== 'none') ml.el.style.display = 'none'; continue; }
+        put(ml.el, this.field.tx(ml.tile), this.field.tileGround(ml.tile) + 1.7, this.field.tz(ml.tile));
+      }
     }
     for (const wl of this.wonderLabels) {
       if (this.visOf(wl.tile) === 0 || far) { if (wl.el.style.display !== 'none') wl.el.style.display = 'none'; continue; }

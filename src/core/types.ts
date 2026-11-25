@@ -75,6 +75,8 @@ export interface City {
   tilesClaimed: number;
   queue: string[];
   buildings: string[];
+  /** この都市にある世界遺産 */
+  marvels: string[];
   hp: number;
   worked: number[];
   founded: number;
@@ -134,6 +136,7 @@ export type GameEvent =
   | { type: 'cityCaptured'; city: number; from: number; to: number; pos: number }
   | { type: 'cityGrew'; city: number; owner: number }
   | { type: 'built'; city: number; owner: number; item: string }
+  | { type: 'marvel'; owner: number; city: number; marvel: string }
   | { type: 'tech'; owner: number; tech: string }
   | { type: 'war'; a: number; b: number }
   | { type: 'peace'; a: number; b: number }
@@ -174,6 +177,8 @@ export interface GameState {
   /** 視界: 0 未探索, 1 探索済み, 2 視界内 */
   vis: number[][];
   camps: Camp[];
+  /** 完成済みの世界遺産 → 都市ID */
+  marvels: Record<string, number>;
   nextId: number;
   winner: Winner | null;
   /** 描画側が消費する一時イベント（セーブしない） */

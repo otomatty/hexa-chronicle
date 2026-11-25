@@ -227,6 +227,30 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   institute: { name: '先端研究機構', cost: 560, y: Y(0, 0, 0, 9), tech: 'rocketry', req: 'laboratory', desc: '科学+9' },
 };
 
+// ---------------------------------------------------------------- 世界遺産（世界に 1 つだけ建てられる。すべて本作オリジナル）
+export interface MarvelDef {
+  name: string;
+  cost: number;
+  y: Yields;
+  tech: string;
+  coastal?: boolean;
+  desc: string;
+  /** 完成時に表示する一文 */
+  quote: string;
+}
+export const MARVELS: Record<string, MarvelDef> = {
+  sunstair: { name: '太陽の大階段', cost: 180, y: Y(0, 2, 0, 0, 3), tech: 'masonry', desc: '生産+2 文化+3', quote: '石を一段積むごとに、民は空へ近づいた。' },
+  archive: { name: '賢者の大書庫', cost: 200, y: Y(0, 0, 0, 4, 1), tech: 'writing', desc: '科学+4 文化+1', quote: '言葉は積まれ、やがて知の山となる。' },
+  beacon: { name: '暁の大灯台', cost: 220, y: Y(1, 0, 4, 0, 1), tech: 'celestial', coastal: true, desc: '食料+1 ゴールド+4 文化+1（沿岸の都市のみ）', quote: '夜の海に灯る一点が、千の船を家へ導く。' },
+  gardens: { name: '雲上の庭園', cost: 240, y: Y(4, 0, 0, 0, 2), tech: 'mathematics', desc: '食料+4 文化+2', quote: '水は坂をのぼり、石の上に森が生まれた。' },
+  colossus: { name: '守護の巨像', cost: 260, y: Y(0, 1, 3, 0, 2), tech: 'iron', desc: '生産+1 ゴールド+3 文化+2、都市防御力+6', quote: '巨像は語らない。ただ、そこに立ち続ける。' },
+  spire: { name: '天文の尖塔', cost: 420, y: Y(0, 0, 0, 6, 1), tech: 'education', desc: '科学+6 文化+1', quote: '星を数えた者だけが、暦を手にした。' },
+  cathedral: { name: '千窓の大聖堂', cost: 520, y: Y(0, 0, 2, 0, 7), tech: 'printing', desc: 'ゴールド+2 文化+7', quote: '千の窓から差す光は、千の色で祈りを染めた。' },
+  clock: { name: '大時計塔', cost: 760, y: Y(0, 5, 4, 0, 1), tech: 'industrialization', desc: '生産+5 ゴールド+4 文化+1', quote: '鐘が時を刻むたび、街はひとつの機械になる。' },
+  skytower: { name: '天空の塔', cost: 1000, y: Y(0, 0, 5, 2, 7), tech: 'radio', desc: 'ゴールド+5 科学+2 文化+7', quote: '声は塔を離れ、国境より遠くへ届いた。' },
+  orbital: { name: '軌道の環', cost: 1300, y: Y(0, 3, 0, 10, 0), tech: 'rocketry', desc: '生産+3 科学+10', quote: '空に架けた環は、次の時代への門となった。' },
+};
+
 // ---------------------------------------------------------------- プロジェクト
 export interface ProjectDef {
   name: string;
@@ -308,5 +332,6 @@ export function itemName(item: string): string {
   const k = item.slice(2);
   if (item[0] === 'u') return UNITS[k]?.name ?? k;
   if (item[0] === 'b') return BUILDINGS[k]?.name ?? k;
+  if (item[0] === 'w') return MARVELS[k]?.name ?? k;
   return PROJECTS[k]?.name ?? k;
 }

@@ -1,7 +1,7 @@
 // ゲームルール本体。
 // すべての変更は applyAction(state, playerId, action) を通る。乱数は state.rng に持つため、
 // 同じ初期状態に同じアクション列を与えれば必ず同じ結果になる（サーバー側実行・リプレイ可能）。
-import { BUILDINGS, CIVS, FEATURE, IMPROVEMENTS, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, Y, MAP_SIZES, BARB_COLOR } from './data';
+import { BUILDINGS, CIVS, FEATURE, IMPROVEMENTS, MARVELS, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, Y, MAP_SIZES, BARB_COLOR } from './data';
 import { hexDist, neighborTable, nextRand, tilesInRange } from './hex';
 import { generateMap } from './mapgen';
 import type { Action, ActionResult, City, GameEvent, GameState, NewGameOptions, Player, Tile, Unit, Yields } from './types';
@@ -137,6 +137,10 @@ export function cityYields(s: GameState, c: City): Yields {
     const d = BUILDINGS[b].y;
     y.food += d.food; y.prod += d.prod; y.gold += d.gold; y.sci += d.sci; y.cul += d.cul;
   }
+  for (const k of c.marvels) {
+    const d = MARVELS[k].y;
+    y.food += d.food; y.prod += d.prod; y.gold += d.gold; y.sci += d.sci; y.cul += d.cul;
+  }
   if (c.capital) { y.prod += 2; y.sci += 2; y.gold += 3; y.cul += 1; }
   y.sci += c.pop * 0.5;
   y.cul += c.pop * 0.25 + 0.5;
@@ -206,6 +210,7 @@ export function itemCost(s: GameState, c: City, item: string): number {
     return Math.round(d.cost * (bonus === 'military' && !d.civilian ? 0.85 : 1));
   }
   if (item[0] === 'b') return Math.round(BUILDINGS[k].cost * (bonus === 'builder' ? 0.85 : 1));
+  if (item[0] === 'w') return MARVELS[k].cost;
   return PROJECTS[k].cost;
 }
 export const buyCost = (s: GameState, c: City, item: string) => Math.ceil(itemCost(s, c, item) * 2.5);
@@ -229,6 +234,12 @@ export function canBuild(s: GameState, c: City, item: string, res?: Set<string>)
     if (d.coastal && !isCoastal(s, c.pos)) return false;
     return true;
   }
+  if (item[0] === 'w') {
+    const d = MARVELS[k];
+    if (!d || k in s.marvels) return false;
+    if (!hasTech(p, d.tech)) return false;
+    return !d.coastal || isCoastal(s, c.pos);
+  }
   if (item[0] === 'p') {
     const d = PROJECTS[k];
     if (!d) return false;
@@ -250,6 +261,7 @@ export function availableItems(s: GameState, c: City): string[] {
   }
   const out = [...best.values()].map((k) => 'u:' + k);
   for (const k in BUILDINGS) if (canBuild(s, c, 'b:' + k)) out.push('b:' + k);
+  for (const k in MARVELS) if (canBuild(s, c, 'w:' + k)) out.push('w:' + k);
   for (const k in PROJECTS) if (canBuild(s, c, 'p:' + k)) out.push('p:' + k);
   return out;
 }
@@ -310,6 +322,11 @@ function completeItem(s: GameState, c: City, item: string): boolean {
     spawnUnit(s, k, c.owner, pos);
   } else if (item[0] === 'b') {
     c.buildings.push(k);
+  } else if (item[0] === 'w') {
+    if (k in s.marvels) return true;
+    s.marvels[k] = c.id;
+    c.marvels.push(k);
+    emit(s, { type: 'marvel', owner: c.owner, city: c.id, marvel: k });
   } else {
     const d = PROJECTS[k];
     if (d.stage !== p.spaceStage) return true;
@@ -340,6 +357,9 @@ function processCity(s: GameState, c: City): Yields {
     c.food = 0;
   }
   // 生産
+  for (const q of c.queue) {
+    if (q[0] === 'w' && q.slice(2) in s.marvels) emit(s, { type: 'notify', owner: c.owner, text: `「${MARVELS[q.slice(2)].name}」は他の文明が先に完成させました`, pos: c.pos });
+  }
   c.queue = c.queue.filter((q) => canBuild(s, c, q));
   const item = c.queue[0];
   if (!item) {
@@ -389,7 +409,7 @@ export function unitMaintenance(s: GameState, pid: number): number {
 export function computeScore(s: GameState, pid: number): number {
   const p = s.players[pid];
   let v = p.techs.length * 6 + p.spaceStage * 50;
-  for (const c of citiesOf(s, pid)) v += 10 + c.pop * 4 + c.buildings.length * 2;
+  for (const c of citiesOf(s, pid)) v += 10 + c.pop * 4 + c.buildings.length * 2 + c.marvels.length * 15;
   for (const t of s.tiles) if (t.owner === pid) v += 1;
   return v;
 }
@@ -712,6 +732,7 @@ export function cityStrength(s: GameState, c: City): number {
   const p = s.players[c.owner];
   let v = 14 + eraOf(p) * 7 + c.pop;
   if (c.buildings.includes('walls')) v += 8;
+  if (c.marvels.includes('colossus')) v += 6;
   if (s.tiles[c.pos].elev === 1) v += 3;
   const g = milAt(s, c.pos);
   if (g) v += Math.floor(UNITS[g.type].str * 0.2);
@@ -931,7 +952,7 @@ function foundCity(s: GameState, pid: number, pos: number): City {
   const first = !Object.values(s.cities).some((c) => c.founder === pid);
   const c: City = {
     id: s.nextId++, name, owner: pid, founder: pid, originalCapital: first, capital: citiesOf(s, pid).length === 0,
-    pos, pop: 1, food: 0, prod: 0, culture: 0, tilesClaimed: 0, queue: [], buildings: [], hp: CITY_MAX_HP, worked: [], founded: s.turn,
+    pos, pop: 1, food: 0, prod: 0, culture: 0, tilesClaimed: 0, queue: [], buildings: [], marvels: [], hp: CITY_MAX_HP, worked: [], founded: s.turn,
   };
   s.cities[c.id] = c;
   rt(s).city[pos] = c.id;
@@ -1214,7 +1235,7 @@ export function applyAction(s: GameState, pid: number, a: Action): ActionResult 
     case 'buy': {
       const c = city(a.city);
       if (!c) return fail('都市がありません');
-      if (a.item[0] === 'p' || !canBuild(s, c, a.item)) return fail('購入できません');
+      if (a.item[0] === 'p' || a.item[0] === 'w' || !canBuild(s, c, a.item)) return fail('購入できません');
       const cost = buyCost(s, c, a.item);
       if (p.gold < cost) return fail('ゴールドが足りません');
       if (!completeItem(s, c, a.item)) return fail('配置できる場所がありません');
@@ -1254,7 +1275,7 @@ export function createGame(o: NewGameOptions): GameState {
   const s: GameState = {
     version: SAVE_VERSION, seed: o.seed, rng: (o.seed * 2654435761) | 0, turn: 1, maxTurns: 300,
     difficulty: o.difficulty, current: 0, w: size.w, h: size.h, tiles, units: {}, cities: {}, players: [],
-    war: [], met: [], truce: [], peaceOffer: [], warSince: [], vis: [], camps: [], nextId: 1, winner: null, events: [],
+    war: [], met: [], truce: [], peaceOffer: [], warSince: [], vis: [], camps: [], marvels: {}, nextId: 1, winner: null, events: [],
   };
   const pool = Object.keys(CIVS).filter((k) => k !== o.civ);
   for (let i = pool.length - 1; i > 0; i--) {
@@ -1308,6 +1329,8 @@ export function deserialize(json: string): GameState {
     terrain: t[0], elev: t[1], feature: t[2], resource: t[3], improvement: t[4], owner: t[5], cityId: t[6], camp: !!t[7], river: t[8] ?? 0, wonder: t[9] ?? '',
   }));
   for (const p of o.players) p.wonders ??= [];
+  o.marvels ??= {};
+  for (const id in o.cities) o.cities[id].marvels ??= [];
   o.vis = o.vis.map((v: string) => Array.from(v, Number));
   o.events = [];
   return o as GameState;

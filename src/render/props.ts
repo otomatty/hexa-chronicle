@@ -278,7 +278,7 @@ export class Props {
     let h = 0;
     for (const t of s.tiles) h = (Math.imul(h, 31) + t.feature.length * 7 + t.improvement.length * 13 + (t.camp ? 3 : 0)) | 0;
     let b = 0;
-    for (const id in s.cities) b = (Math.imul(b, 31) + s.cities[id].buildings.length * 7 + s.cities[id].pos) | 0;
+    for (const id in s.cities) b = (Math.imul(b, 31) + s.cities[id].buildings.length * 7 + s.cities[id].marvels.length * 13 + s.cities[id].pos) | 0;
     const sig = h + ':' + b;
     if (sig === this.sig) return;
     this.sig = sig;
