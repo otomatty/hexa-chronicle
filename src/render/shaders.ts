@@ -242,6 +242,7 @@ const HC_BUILDING_COLOR = /* glsl */ `
     float lum = dot(c, vec3(0.3, 0.59, 0.11));
     float sat = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
     if (abs(wn.y) < 0.35) {
+      #ifdef HC_WINDOWS
       vec2 tdir = normalize(vec2(-wn.z, wn.x) + 1e-5);
       float u = dot(vHcPos.xz, tdir) * 27.0;
       float v = vHcPos.y * 31.0;
@@ -252,6 +253,7 @@ const HC_BUILDING_COLOR = /* glsl */ `
       vec3 wc = mix(vec3(0.08, 0.1, 0.15), vec3(1.0, 0.8, 0.42), lit * 0.5);
       c *= 0.9 + 0.16 * hcN(vec2(u, v) * 1.7);
       c = mix(c, wc, win * wallish * 0.78);
+      #endif
     } else {
       float flat_ = smoothstep(0.9, 0.98, abs(wn.y));
       // 屋根：斜面に沿った瓦の段
@@ -289,7 +291,7 @@ const HC_TERRAIN_NORMAL = /* glsl */ `
   #endif
 `;
 
-export type PatchKind = 'terrain' | 'prop' | 'building' | 'unit';
+export type PatchKind = 'terrain' | 'prop' | 'building' | 'paved' | 'unit';
 
 /**
  * 標準マテリアルに、雲の影・戦場の霧・トーンマッピングと、種類ごとの質感
@@ -297,8 +299,8 @@ export type PatchKind = 'terrain' | 'prop' | 'building' | 'unit';
  */
 export function patchMaterial<T extends THREE.Material>(mat: T, uniforms: MapUniforms, kind: PatchKind, detail = false): T {
   const terrain = kind === 'terrain';
-  mat.defines = { ...(mat.defines ?? {}), ...(detail ? { HC_DETAIL: '' } : {}), ...(terrain ? { HC_TERRAIN: '' } : {}) };
-  const color = terrain ? HC_TERRAIN_COLOR : kind === 'building' ? HC_BUILDING_COLOR : kind === 'prop' ? HC_PROP_COLOR : '';
+  mat.defines = { ...(mat.defines ?? {}), ...(detail ? { HC_DETAIL: '' } : {}), ...(terrain ? { HC_TERRAIN: '' } : {}), ...(kind === 'building' ? { HC_WINDOWS: '' } : {}) };
+  const color = terrain ? HC_TERRAIN_COLOR : kind === 'building' || kind === 'paved' ? HC_BUILDING_COLOR : kind === 'prop' ? HC_PROP_COLOR : '';
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader

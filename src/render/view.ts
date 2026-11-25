@@ -8,6 +8,7 @@ import { Fx } from './fx';
 import { planDistricts } from './districts';
 import { cityGeometry, districtGeometry, poseUnit, unitGeometry } from './models';
 import { hash } from './geo';
+import { hasPack } from './pack';
 import { Post } from './post';
 import { Props } from './props';
 import { createMapTextures, PARCHMENT, patchMaterial, type MapTextures } from './shaders';
@@ -163,7 +164,7 @@ export class GameView {
     this.scene.add(buildWater(s, this.tex.uniforms, this.sunDir));
     this.props = new Props(this.field, this.tex.uniforms, quality !== 'low');
     this.scene.add(this.props.root);
-    this.cityMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), this.tex.uniforms, 'building', quality !== 'low');
+    this.cityMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), this.tex.uniforms, hasPack() ? 'paved' : 'building', quality !== 'low');
 
     this.ringMesh = new THREE.Mesh(
       new THREE.RingGeometry(0.62, 0.72, 40).rotateX(-Math.PI / 2),

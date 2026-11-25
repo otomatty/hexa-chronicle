@@ -505,7 +505,8 @@ export class Hud {
       <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 視点移動　<kbd>T</kbd> 技術　<kbd>G</kbd> グリッド　<kbd>Esc</kbd> 選択解除<br><br>
       <b style="color:var(--text)">タッチ</b><br>1本指ドラッグ: 視点移動　ピンチ: 拡大縮小　タップ: 選択・移動・攻撃<br><br>
       <b style="color:var(--text)">進め方</b><br>開拓者で都市を建設 → 都市で生産と研究を選ぶ → 労働者で資源を改良 → 開拓者を増やして領土を広げましょう。<br>
-      弓兵などの遠隔ユニットは反撃を受けずに攻撃できます。都市は近接ユニットで耐久を0にすると占領できます。</div>`);
+      弓兵などの遠隔ユニットは反撃を受けずに攻撃できます。都市は近接ユニットで耐久を0にすると占領できます。<br><br>
+      <b style="color:var(--text)">素材</b><br>建物・樹木・岩の一部に KayKit Medieval Hexagon Pack（Kay Lousberg 作、CC0）を使用しています。</div>`);
   }
 
   showEnd(w: Winner | null, defeated: boolean): void {

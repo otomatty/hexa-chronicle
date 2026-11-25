@@ -1,6 +1,7 @@
 // ユニットと都市のプロシージャルモデル。外部アセットを使わず、プリミティブの組み合わせで作る。
 import * as THREE from 'three';
-import { ball, box, cone, cyl, group, hash, merge, ring, tag } from './geo';
+import { ball, box, cone, cyl, group, hash, merge, ring, tag, xf } from './geo';
+import { hasPack, packGeo } from './pack';
 
 type Geo = THREE.BufferGeometry;
 const SKIN = 0xe0b48c, WOOD = 0x6b4a2c, DARK = 0x2a2622, STEEL = 0xb8bcc4, IRON = 0x55585e, LEATHER = 0x7a5a36;
@@ -203,6 +204,21 @@ function house(w: number, h: number, d: number, wall: number, roof: number, x: n
   ], { x, y, z, ry });
 }
 
+function addWalls(p: Geo[], look: CityLook, TOP: number): void {
+  const { era, c1 } = look;
+  if (look.walls) {
+    const R = 0.74, stone = era >= 3 ? 0x9a958c : 0xb0a58c;
+    for (let k = 0; k < 6; k++) {
+      const a0 = (Math.PI / 3) * k + Math.PI / 6, a1 = a0 + Math.PI / 3;
+      const x0 = Math.cos(a0) * R, z0 = Math.sin(a0) * R, x1 = Math.cos(a1) * R, z1 = Math.sin(a1) * R;
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      const y = TOP;
+      if (k !== 1) p.push(box(R * 0.98, 0.14, 0.05, stone, { x: mx, y: y + 0.07, z: mz, ry: -Math.atan2(z1 - z0, x1 - x0) }));
+      p.push(cyl(0.055, 0.065, 0.22, 6, stone, { x: x0, y: TOP + 0.11, z: z0 }), cone(0.07, 0.08, 6, c1, { x: x0, y: TOP + 0.26, z: z0 }));
+    }
+  }
+}
+
 export interface CityLook { pop: number; era: number; walls: boolean; capital: boolean; c1: number; c2: number; seed: number }
 
 export function cityGeometry(look: CityLook): Geo {
@@ -216,6 +232,25 @@ export function cityGeometry(look: CityLook): Geo {
   p.push(cyl(0.805, 0.805, 0.03, 6, era >= 4 ? 0x6f6c68 : 0x8a7d66, { y: TOP - 0.03, ry: Math.PI / 6 }));
   for (let k = 0; k < 3; k++) p.push(box(1.36, 0.012, 0.06, era >= 4 ? 0x5f5d5a : 0x8f8168, { y: TOP + 0.004, ry: (Math.PI / 3) * k + Math.PI / 6 }));
   const lift: Geo[] = [];
+  if (hasPack() && era < 4) {
+    // 産業時代より前は、外部モデルパックの建物で街並みを組む
+    const P = (name: string, size: number, x: number, z: number, ry: number) => xf(packGeo(name, size, c1), { x, y: TOP, z, ry });
+    if (look.capital) p.push(P('castle', 0.21, 0, 0, hash(seed, 1) * 6.28));
+    else if (look.pop >= 5) p.push(P('church', 0.3, 0, 0, hash(seed, 1) * 6.28));
+    else p.push(P('tower_A', 0.22, 0, 0, hash(seed, 1) * 6.28));
+    const n = Math.min(11, 3 + look.pop);
+    for (let k = 0; k < n; k++) {
+      const inner = k < 6;
+      const a = ((inner ? k : k - 6) / (inner ? 6 : 5)) * Math.PI * 2 + hash(seed, k) * 0.4 + (inner ? 0.5 : 0);
+      const r = (inner ? 0.38 : 0.58) + hash(seed, k + 50) * 0.05;
+      const kind = k === 2 && look.pop >= 3 ? 'well' : k === 4 && look.pop >= 6 ? 'tavern' : k === 7 && look.pop >= 8 ? 'church' : hash(seed, k + 20) < 0.5 ? 'home_A' : 'home_B';
+      const size = kind === 'tavern' ? 0.17 : kind === 'church' ? 0.2 : kind === 'well' ? 0.26 : 0.19 + hash(seed, k + 30) * 0.04;
+      p.push(P(kind, size, Math.cos(a) * r, Math.sin(a) * r, -a + Math.PI / 2));
+    }
+    p.push(cyl(0.008, 0.008, 0.3, 4, DARK, { y: look.capital ? 1.0 : 0.72 }), box(0.14, 0.08, 0.01, c1, { x: 0.07, y: look.capital ? 1.1 : 0.82 }), box(0.14, 0.02, 0.012, c2, { x: 0.07, y: look.capital ? 1.1 : 0.82 }));
+    addWalls(p, look, TOP);
+    return merge(p);
+  }
   const wallCol = era >= 4 ? 0xb9a089 : era >= 2 ? 0xd9cfb8 : 0xcdb891;
   const roofs = [c1, 0x9a4a32, 0x7a5a3a, c2];
   // 中心の建物
@@ -253,17 +288,7 @@ export function cityGeometry(look: CityLook): Geo {
     else if (tall) { p.push(box(w, h, d, 0x9a6a55, { x, y: gy(x, z) + h / 2, z, ry: a })); p.push(box(0.025, 0.1, 0.025, 0x5a4a44, { x: x + 0.02, y: gy(x, z) + h + 0.05, z })); }
     else p.push(...house(w, h, d, wallCol, roofs[Math.floor(hash(seed, k + 70) * roofs.length)], x, gy(x, z), z, a));
   }
-  if (look.walls) {
-    const R = 0.74, stone = era >= 3 ? 0x9a958c : 0xb0a58c;
-    for (let k = 0; k < 6; k++) {
-      const a0 = (Math.PI / 3) * k + Math.PI / 6, a1 = a0 + Math.PI / 3;
-      const x0 = Math.cos(a0) * R, z0 = Math.sin(a0) * R, x1 = Math.cos(a1) * R, z1 = Math.sin(a1) * R;
-      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-      const y = TOP;
-      if (k !== 1) p.push(box(R * 0.98, 0.14, 0.05, stone, { x: mx, y: y + 0.07, z: mz, ry: -Math.atan2(z1 - z0, x1 - x0) }));
-      p.push(cyl(0.055, 0.065, 0.22, 6, stone, { x: x0, y: gy(x0, z0) + 0.11, z: z0 }), cone(0.07, 0.08, 6, c1, { x: x0, y: gy(x0, z0) + 0.26, z: z0 }));
-    }
-  }
+  addWalls(p, look, TOP);
   return merge(p);
 }
 
@@ -305,6 +330,9 @@ export function districtGeometry(kind: DistrictKind, level: number, era: number,
     if (level >= 3) p.push(box(0.2, 0.26, 0.16, 0xa9c4dc, { x: 0.02, y: T + 0.13, z: -0.44 }), box(0.21, 0.02, 0.17, 0x6f8fae, { x: 0.02, y: T + 0.27, z: -0.44 }));
     if (level >= 4) p.push(cyl(0.05, 0.065, 0.5, 8, 0xb8cfe2, { x: -0.05, y: T + 0.25, z: 0.44 }), cyl(0.004, 0.004, 0.2, 4, 0x3a3f4a, { x: -0.05, y: T + 0.6, z: 0.44 }), ball(0.03, 0xd9432b, { x: -0.05, y: T + 0.7, z: 0.44 }, 5, 4));
     p.push(cyl(0.01, 0.01, 0.2, 4, 0x3a3f4a, { x: 0.22, y: T + 0.1, z: 0.44 }), box(0.1, 0.06, 0.01, blue, { x: 0.27, y: T + 0.17, z: 0.44 }));
+  } else if (kind === 'commerce' && hasPack()) {
+    p.push(xf(packGeo('market', 0.4, c1), { x: -0.08, y: T, z: -0.14, ry: 0.4 }), xf(packGeo('barrel', 0.5), { x: 0.36, y: T, z: 0.2 }), xf(packGeo('crate', 0.5), { x: 0.3, y: T, z: 0.36, ry: 0.5 }), xf(packGeo('sack', 0.6), { x: -0.38, y: T, z: 0.3 }));
+    if (level >= 2) p.push(...group(colonnade(0.24, 0.15, 0.15, wall, 0xd9a441, { x: 0, z: 0, ry: 0 }), { x: 0.3, y: T, z: -0.36, ry: -0.6 }));
   } else if (kind === 'commerce') {
     const awn = [c1, c2, 0xd9a441, 0xf1ead8, 0x3f8f6a];
     const n = 4 + Math.min(2, level);
@@ -315,6 +343,9 @@ export function districtGeometry(kind: DistrictKind, level: number, era: number,
     }
     p.push(cyl(0.05, 0.06, 0.04, 8, 0x9a958c, { y: T + 0.02 }), cyl(0.012, 0.012, 0.12, 5, 0x9a958c, { y: T + 0.08 }));
     if (level >= 2) p.push(...group(colonnade(0.26, 0.16, 0.16, wall, 0xd9a441, { x: 0, z: 0, ry: 0 }), { x: -0.02, y: T, z: -0.47 }));
+  } else if (kind === 'industry' && hasPack() && level < 2) {
+    p.push(xf(packGeo('blacksmith', 0.36, c1), { x: -0.12, y: T, z: -0.12, ry: 0.5 }), xf(packGeo('lumber', 0.5), { x: 0.36, y: T, z: 0.22 }), xf(packGeo('stone', 0.5), { x: -0.3, y: T, z: 0.38 }));
+    smoke.push([-0.12, T + 0.45, -0.12]);
   } else if (kind === 'industry') {
     p.push(...group(house(0.3, 0.14, 0.2, 0x9a7a5a, 0x5a4638, 0, 0, 0, 0), { x: -0.3, y: T, z: -0.24, ry: 0.4 }));
     p.push(box(0.1, 0.05, 0.1, 0x4a4038, { x: -0.38, y: T + 0.025, z: 0.2 }), box(0.14, 0.04, 0.08, 0x8b6a42, { x: -0.2, y: T + 0.02, z: 0.36, ry: 0.4 }));

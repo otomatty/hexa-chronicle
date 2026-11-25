@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { GameState } from '../core/types';
 import { districtTiles } from './districts';
 import { ball, box, cone, cyl, hash, ico, merge, xf } from './geo';
+import { hasPack, packGeo } from './pack';
 import { patchMaterial, type MapUniforms } from './shaders';
 import type { Field } from './terrain';
 
@@ -47,6 +48,26 @@ function cow(c: number, t: { x: number; z: number; ry: number }): Geo[] {
 }
 
 function geos(): Record<string, Geo> {
+  const out = proceduralGeos();
+  if (hasPack()) Object.assign(out, packGeos(out));
+  return out;
+}
+
+/** 外部モデルパックで置き換える分（木・岩・山・鉱山・製材所・風車・野営地） */
+function packGeos(base: Record<string, Geo>): Record<string, Geo> {
+  const P = (name: string, size: number, t: Parameters<typeof xf>[1] = {}) => xf(packGeo(name, size), t);
+  return {
+    tree2: P('tree_A', 0.6), pine: P('tree_B', 0.6),
+    pebble: merge([P('rock_C', 0.5), P('rock_A', 0.6, { x: 0.1, z: 0.05 })]),
+    stone: merge([P('stone', 0.5), P('rock_E', 0.8, { x: 0.2, z: 0.12 })]),
+    mine: merge([P('mine', 0.33, { x: 0.4, z: 0.32 })]),
+    lumbermill: merge([P('lumbermill', 0.3, { x: 0.4, z: 0.32 }), P('lumber', 0.45, { x: 0.68, z: 0.08 })]),
+    farmMill: merge([base.farm, P('windmill', 0.3, { x: 0.42, y: 0.15, z: 0.42 })]),
+    camp: merge([base.camp, P('tent', 0.7, { x: -0.05, z: 0.1 }), P('tent', 0.55, { x: 0.28, z: -0.12, ry: 1.2 }), P('weaponrack', 0.6, { x: -0.3, z: -0.2 }), P('barrel', 0.5, { x: 0.1, z: 0.36 })]),
+  };
+}
+
+function proceduralGeos(): Record<string, Geo> {
   const rocks = (c1: number, c2: number, c3: number) => merge([
     ico(0.11, c1, { y: 0.06, sy: 0.75 }), ico(0.08, c2, { x: 0.13, y: 0.04, z: 0.05, sy: 0.75 }), ico(0.065, c3, { x: -0.07, y: 0.035, z: 0.11, sy: 0.75 }),
   ]);
@@ -330,9 +351,12 @@ export class Props {
         }
         if (t.elev === 1 && this.rich) scatter('pebble', 3, 0.8, 1.7, 0.2, 6, t.terrain === 'desert' ? [1.2, 1, 0.8] : [1, 1, 1]);
       }
-      if (t.improvement && this.geo[t.improvement]) {
+      // 農場のうち一部には風車を建てる
+      if (t.improvement === 'farm' && this.geo.farmMill && hash(i, 14) < 0.3) add('farmMill', cx, cz, hash(i, 11) * 3.14, 1);
+      else if (t.improvement && this.geo[t.improvement]) {
         const center = t.improvement === 'farm' || t.improvement === 'pasture' || t.improvement === 'plantation';
-        add(t.improvement, cx + (center ? 0 : -0.38), cz + (center ? 0 : -0.3), center ? hash(i, 11) * 3.14 : 0.4, 1);
+        if (hasPack() && !center) add(t.improvement, cx, cz, Math.floor(hash(i, 11) * 6) * (Math.PI / 3), 1);
+        else add(t.improvement, cx + (center ? 0 : -0.38), cz + (center ? 0 : -0.3), center ? hash(i, 11) * 3.14 : 0.4, 1);
       }
       if (t.resource && this.geo[t.resource] && t.improvement !== 'plantation') {
         add(t.resource, cx + 0.36, cz + 0.34, hash(i, 12) * 6.28, 1.15);

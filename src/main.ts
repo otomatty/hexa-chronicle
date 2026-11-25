@@ -6,6 +6,7 @@ import {
   serialize, unitsOf,
 } from './core/game';
 import type { Action, GameEvent, GameState, NewGameOptions } from './core/types';
+import { loadPack, setPackEnabled } from './render/pack';
 import { GameView, type Quality } from './render/view';
 import { cityLabelInfo, Hud, showTitle, type GameApi, type Task } from './ui/ui';
 
@@ -354,7 +355,8 @@ class Game implements GameApi {
     this.quality = prefs.quality = q;
     store.set(K_PREFS, JSON.stringify(prefs));
     loading(true, '描画を再構築中…');
-    setTimeout(() => { this.view.dispose(); this.makeView(); this.flush(); loading(false); }, 30);
+    setPackEnabled(q !== 'low');
+    void (q === 'low' ? Promise.resolve(false) : loadPack()).then(() => setTimeout(() => { this.view.dispose(); this.makeView(); this.flush(); loading(false); }, 30));
   }
   setGrid(on: boolean): void {
     this.grid = prefs.grid = on;
@@ -387,13 +389,15 @@ let game: Game | null = null;
 
 function start(state: GameState): void {
   loading(true);
-  setTimeout(() => {
+  // モデルパックの読み込みを待ってから世界を作る（失敗しても手続き生成のモデルで続行する）
+  setPackEnabled(prefs.quality !== 'low');
+  void (prefs.quality === 'low' ? Promise.resolve(false) : loadPack()).then(() => setTimeout(() => {
     game?.dispose();
     hudEl.innerHTML = '';
     game = new Game(state);
     (window as unknown as { __game: Game }).__game = game;
     loading(false);
-  }, 40);
+  }, 40));
 }
 
 function startFromSave(data: string): void {
