@@ -170,7 +170,7 @@ const CORNER_Z = [0, 1, 2, 3, 4, 5].map((k) => Math.sin((Math.PI / 180) * (30 + 
 // 六角形の頂点（三角格子上の整数オフセット）
 const CORNERS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
 
-export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, subdiv: number, detail: boolean): THREE.Mesh {
+export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, subdiv: number, detail: boolean): THREE.Group {
   const N = subdiv;
   const n = s.w * s.h;
   const OFF = 4096, K = 16384;
@@ -195,7 +195,9 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
     return v;
   };
 
+  const tileStart: number[] = [];
   for (let i = 0; i < n; i++) {
+    tileStart.push(idx.length);
     const row = (i / s.w) | 0, c = i % s.w;
     const a = 2 * c + (row & 1), b = (3 * row - a) / 2;
     const CA = a * N, CB = b * N;
@@ -251,11 +253,33 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geo.setAttribute('aMat', new THREE.Float32BufferAttribute(mats, 4));
   const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), uniforms, 'terrain', detail);
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.castShadow = true;
-  mesh.matrixAutoUpdate = false;
-  return mesh;
+  // 画面外を描かずに済むよう、頂点バッファは共有したまま区画ごとのメッシュに分ける
+  tileStart.push(idx.length);
+  const group = new THREE.Group();
+  const CW = 10, CH = 7;
+  for (let cr = 0; cr < s.h; cr += CH) {
+    for (let cc = 0; cc < s.w; cc += CW) {
+      const part: number[] = [];
+      for (let r = cr; r < Math.min(s.h, cr + CH); r++) {
+        for (let c = cc; c < Math.min(s.w, cc + CW); c++) {
+          const i = r * s.w + c;
+          for (let k = tileStart[i]; k < tileStart[i + 1]; k++) part.push(idx[k]);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      for (const name of ['position', 'normal', 'color', 'aMat']) g.setAttribute(name, geo.attributes[name]);
+      g.setIndex(part);
+      const x0 = cc * SQ3 * HEX - 1.2, x1 = Math.min(s.w, cc + CW) * SQ3 * HEX + 1.2;
+      const z0 = cr * 1.5 * HEX - 1.2, z1 = Math.min(s.h, cr + CH) * 1.5 * HEX + 1.2;
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3((x0 + x1) / 2, 0.5, (z0 + z1) / 2), Math.hypot(x1 - x0, z1 - z0, 3) / 2);
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      mesh.matrixAutoUpdate = false;
+      group.add(mesh);
+    }
+  }
+  return group;
 }
 
 export function buildWater(s: GameState, uniforms: MapUniforms, sun: THREE.Vector3): THREE.Mesh {

@@ -17,6 +17,11 @@ export interface GameApi {
   busy: boolean;
   quality: Quality;
   grid: boolean;
+  perf: boolean;
+  autoScale: boolean;
+  setPerf(on: boolean): void;
+  setAutoScale(on: boolean): void;
+  perfStats(): { fps: number; ms: number; calls: number; tris: number; scale: number };
   act(a: Action): boolean;
   selectUnit(id: number): void;
   selectCity(id: number): void;
@@ -108,8 +113,9 @@ export class Hud {
       <div id="unit" class="panel" style="display:none"></div>
       <div id="city" class="panel" style="display:none"></div>
       <button id="endturn" data-a="endturn"></button>
-      <div id="tip" class="panel" style="display:none"></div>`;
-    for (const id of ['top', 'research', 'toasts', 'minimap', 'unit', 'city', 'endturn', 'tip']) this.el[id] = root.querySelector('#' + id)!;
+      <div id="tip" class="panel" style="display:none"></div>
+      <div id="perf" style="display:none"></div>`;
+    for (const id of ['top', 'research', 'toasts', 'minimap', 'unit', 'city', 'endturn', 'tip', 'perf']) this.el[id] = root.querySelector('#' + id)!;
     const cv = this.el.minimap.querySelector('canvas')!;
     this.mmCtx = cv.getContext('2d')!;
     const s = api.state;
@@ -129,7 +135,7 @@ export class Hud {
     };
     root.addEventListener('click', click);
     modal.addEventListener('click', (e) => { if (e.target === modal && modal.dataset.lock !== '1') this.closeModal(); else click(e); });
-    this.timer = window.setInterval(() => this.drawMinimap(), 200);
+    this.timer = window.setInterval(() => { this.drawMinimap(); this.drawPerf(); }, 250);
     this.update();
   }
 
@@ -181,6 +187,8 @@ export class Hud {
       case 'cload': this.closeModal(); api.cloudLoad(); break;
       case 'quality': this.closeModal(); api.setQuality(v as Quality); break;
       case 'grid': api.setGrid(!api.grid); this.showMenu(); break;
+      case 'perf': api.setPerf(!api.perf); this.showMenu(); break;
+      case 'autoscale': api.setAutoScale(!api.autoScale); this.showMenu(); break;
       case 'title': this.confirm('タイトルに戻りますか？（オートセーブは残ります）', () => api.toTitle()); break;
     }
   }
@@ -341,6 +349,14 @@ export class Hud {
     ctx.strokeRect(t.x * k - 16, t.z * k - 10, 32, 20);
   }
 
+  private drawPerf(): void {
+    const el = this.el.perf;
+    if (!this.api.perf) { if (el.style.display !== 'none') el.style.display = 'none'; return; }
+    const p = this.api.perfStats();
+    el.style.display = '';
+    el.textContent = `${p.fps.toFixed(0)} fps ・ 処理 ${p.ms.toFixed(1)} ms ・ 描画命令 ${p.calls} ・ 三角形 ${(p.tris / 1000).toFixed(0)}k ・ 解像度 ${Math.round(p.scale * 100)}% ・ 画質 ${this.api.quality}`;
+  }
+
   // ---------------------------------------------------------------- 通知・ツールチップ
   toast(text: string, kind = '', pos = -1, action?: { label: string; run(): void }): void {
     const el = document.createElement('div');
@@ -491,6 +507,8 @@ export class Hud {
       <button class="btn" data-a="csave">☁️ クラウドに保存</button>
       <button class="btn" data-a="cload">☁️ クラウドから読込</button>
       <div class="sec">画質</div><div class="acts" style="margin:0">${q('low', '低')}${q('medium', '中')}${q('high', '高')}</div>
+      <button class="btn" data-a="autoscale">重いとき解像度を自動で下げる: ${api.autoScale ? 'ON' : 'OFF'}</button>
+      <button class="btn" data-a="perf">性能表示（fps など）: ${api.perf ? 'ON' : 'OFF'}</button>
       <button class="btn" data-a="grid">グリッド表示: ${api.grid ? 'ON' : 'OFF'}</button>
       <button class="btn" data-a="help">❓ 操作方法</button>
       <button class="btn danger" data-a="title">タイトルに戻る</button></div>`);

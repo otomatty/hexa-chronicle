@@ -77,6 +77,21 @@ export class GameView {
   readonly field: Field;
   readonly cam = { tx: 0, tz: 0, dist: 20, yaw: 0, gx: 0, gz: 0, gd: 20, gyaw: 0 };
   revealAll = false;
+  /** 計測値：fps は実際の表示間隔、ms は 1 フレームの JS 処理時間、calls/tris は描画命令数と三角形数 */
+  readonly stats = { fps: 60, ms: 0, calls: 0, tris: 0, scale: 1 };
+  private statAcc = { t: 0, n: 0, js: 0 };
+  /** 重いときに描画解像度を自動で下げる */
+  autoScale = true;
+  private basePR = 1;
+  private slow = 0;
+  private fast = 0;
+  private lastInput = 0;
+  private skipped = 0;
+  private parity = false;
+  private shadowAt = { x: 1e9, z: 1e9, d: 0 };
+  private shadowDirty = true;
+  private labelSig = '';
+  private labelsDirty = true;
   selectedUnit = 0;
 
   private tex: MapTextures;
@@ -115,7 +130,8 @@ export class GameView {
     this.mapH = s.h * 1.5 * HEX;
     // 後処理を使う画質では、アンチエイリアスは描画バッファ側（MSAA）で行う
     this.renderer = new THREE.WebGLRenderer({ antialias: quality === 'low', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
+    this.basePR = Math.min(window.devicePixelRatio || 1, q.dpr);
+    this.renderer.setPixelRatio(this.basePR);
     // トーンマッピングと sRGB 変換は各シェーダー内（hcTone）で行う
     this.renderer.toneMapping = THREE.NoToneMapping;
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -141,6 +157,8 @@ export class GameView {
       this.sun.shadow.bias = -0.0006;
       this.sun.shadow.normalBias = 0.03;
       this.sun.shadow.radius = 2.5;
+      // 影は、視点が動いたときと物が動いたときだけ描き直す
+      this.sun.shadow.autoUpdate = false;
     }
     this.scene.add(this.sun, this.sun.target);
 
@@ -192,13 +210,63 @@ export class GameView {
     this.bindInput();
     this.resize();
     this.sync(s);
+    this.renderer.info.autoReset = false;
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop);
-      const dt = Math.min(0.1, (now - this.last) / 1000);
+      const real = (now - this.last) / 1000;
+      const dt = Math.min(0.1, real);
       this.last = now;
-      this.frame(dt);
+      const a = this.statAcc;
+      a.t += real; a.n++;
+      // 何も動いていないときは 1 フレームおきに描く（水面と雲だけなので 30fps で十分）
+      this.parity = !this.parity;
+      if (!this.isActive(now) && this.parity) { this.skipped += dt; return; }
+      const t0 = performance.now();
+      this.renderer.info.reset();
+      this.frame(Math.min(0.1, dt + this.skipped));
+      this.skipped = 0;
+      a.js += performance.now() - t0;
+      if (a.t >= 1) {
+        this.stats.fps = a.n / a.t;
+        this.stats.ms = a.js / a.n;
+        this.stats.calls = this.renderer.info.render.calls;
+        this.stats.tris = this.renderer.info.render.triangles;
+        a.t = 0; a.n = 0; a.js = 0;
+        this.govern();
+      }
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  /** 入力・カメラ移動・演出のいずれかが進行中か */
+  private isActive(now: number): boolean {
+    const c = this.cam;
+    if (now - this.lastInput < 1200 || this.keys.size) return true;
+    if (Math.abs(c.gx - c.tx) + Math.abs(c.gz - c.tz) + Math.abs(c.gd - c.dist) + Math.abs(c.gyaw - c.yaw) > 0.002) return true;
+    if (this.shots.length || this.timers.length || this.fx.live) return true;
+    for (const uv of this.units.values()) if (uv.queue.length || uv.lunge || uv.dying > 0 || uv.aim > 0 || uv.hit > 0) return true;
+    return false;
+  }
+
+  /** 表示が 40fps を下回り続けたら解像度を一段下げ、十分に余裕が続けば戻す */
+  private govern(): void {
+    if (!this.autoScale || document.hidden) { this.slow = this.fast = 0; return; }
+    const fps = this.stats.fps, st = this.stats;
+    this.slow = fps < 40 ? this.slow + 1 : 0;
+    this.fast = fps > 57 ? this.fast + 1 : 0;
+    let next = st.scale;
+    if (this.slow >= 2 && st.scale > 0.56) next = Math.max(0.55, st.scale - 0.15);
+    else if (this.fast >= 12 && st.scale < 1) next = Math.min(1, st.scale + 0.15);
+    if (next === st.scale) return;
+    st.scale = next;
+    this.slow = this.fast = 0;
+    this.renderer.setPixelRatio(this.basePR * next);
+    this.resize();
+  }
+
+  setAutoScale(on: boolean): void {
+    this.autoScale = on;
+    if (!on && this.stats.scale !== 1) { this.stats.scale = 1; this.renderer.setPixelRatio(this.basePR); this.resize(); }
   }
 
   dispose(): void {
@@ -224,12 +292,14 @@ export class GameView {
     const ptrs = new Map<number, { x: number; y: number }>();
     let downX = 0, downY = 0, moved = false, button = 0, pinch = 0;
     on(el, 'pointerdown', (e: PointerEvent) => {
+      this.lastInput = performance.now();
       el.setPointerCapture(e.pointerId);
       ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (ptrs.size === 1) { downX = e.clientX; downY = e.clientY; moved = false; button = e.button; }
       else { moved = true; pinch = 0; }
     });
     on(el, 'pointermove', (e: PointerEvent) => {
+      this.lastInput = performance.now();
       const p = ptrs.get(e.pointerId);
       if (!p) { this.hover(e.clientX, e.clientY); return; }
       const dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -261,6 +331,7 @@ export class GameView {
     on(el, 'contextmenu', (e: Event) => e.preventDefault());
     on(el, 'wheel', (e: WheelEvent) => {
       e.preventDefault();
+      this.lastInput = performance.now();
       this.cam.gd = this.clampDist(this.cam.gd * Math.exp(e.deltaY * 0.0011));
     }, { passive: false });
     on(window, 'keydown', (e: KeyboardEvent) => {
@@ -351,6 +422,8 @@ export class GameView {
   // ---------------------------------------------------------------- 状態の反映
   sync(s: GameState): void {
     this.state = s;
+    this.shadowDirty = this.labelsDirty = true;
+    this.lastInput = performance.now();
     const d = this.tex.vis;
     for (let i = 0; i < s.tiles.length; i++) {
       const v = this.visOf(i);
@@ -537,6 +610,7 @@ export class GameView {
 
   // ---------------------------------------------------------------- 演出
   playEvents(events: GameEvent[], s: GameState): void {
+    if (events.length) this.lastInput = performance.now();
     for (const e of events) {
       if (e.type === 'move') {
         const u = s.units[e.unit];
@@ -658,15 +732,26 @@ export class GameView {
     this.camera.lookAt(c.tx, 0, c.tz);
     this.camera.updateMatrixWorld();
 
-    if (this.sun.castShadow) {
-      const r = Math.min(46, Math.max(12, c.dist * 0.85));
-      const sc = this.sun.shadow.camera;
-      sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 1; sc.far = 160;
-      sc.updateProjectionMatrix();
+    // 影：視点がある程度動いたか、物が動いているときだけ描き直す（光源もそのときだけ動かす）
+    const sa = this.shadowAt;
+    let moving = this.shots.length > 0;
+    if (!moving) for (const uv of this.units.values()) if (uv.queue.length || uv.lunge || uv.dying > 0) { moving = true; break; }
+    const shifted = Math.abs(c.tx - sa.x) + Math.abs(c.tz - sa.z) > Math.max(0.5, c.dist * 0.04) || Math.abs(c.dist - sa.d) > sa.d * 0.06;
+    if (this.shadowDirty || moving || shifted) {
+      sa.x = c.tx; sa.z = c.tz; sa.d = c.dist;
+      this.shadowDirty = false;
+      if (this.sun.castShadow) {
+        const r = Math.min(46, Math.max(12, c.dist * 0.95));
+        const sc = this.sun.shadow.camera;
+        sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 1; sc.far = 160;
+        sc.updateProjectionMatrix();
+        this.sun.shadow.needsUpdate = true;
+      }
+      this.sun.position.set(c.tx + this.sunDir.x * 70, this.sunDir.y * 70, c.tz + this.sunDir.z * 70);
+      this.sun.target.position.set(c.tx, 0, c.tz);
+      this.sun.target.updateMatrixWorld();
     }
-    this.sun.position.set(c.tx + this.sunDir.x * 70, this.sunDir.y * 70, c.tz + this.sunDir.z * 70);
-    this.sun.target.position.set(c.tx, 0, c.tz);
-    this.sun.target.updateMatrixWorld();
+    this.props.setFar(c.dist > 27);
 
     this.tex.uniforms.uTime.value += dt;
     const time = this.tex.uniforms.uTime.value;
@@ -760,7 +845,13 @@ export class GameView {
 
     if (this.post) this.post.render(this.renderer, this.scene, this.camera, Math.min(1, Math.max(0, (15 - c.dist) / 8)) * 0.7);
     else this.renderer.render(this.scene, this.camera);
-    this.placeLabels();
+    // ラベルは、視点か対象が動いたときだけ置き直す
+    const sig = `${c.tx.toFixed(3)},${c.tz.toFixed(3)},${c.dist.toFixed(3)},${c.yaw.toFixed(4)},${this.host.clientWidth},${this.host.clientHeight}`;
+    if (sig !== this.labelSig || this.labelsDirty || moving) {
+      this.labelSig = sig;
+      this.labelsDirty = false;
+      this.placeLabels();
+    }
   }
 
   private placeLabels(): void {

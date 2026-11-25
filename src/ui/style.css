@@ -104,6 +104,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #tip b { font-family: var(--display); font-size: 13px; }
 #tip .u { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
 
+#perf { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 3px 12px; border-radius: 10px; background: rgba(8, 11, 19, 0.82); border: 1px solid var(--line); font: 12px ui-monospace, 'SF Mono', Menlo, Consolas, monospace; color: #cfe3ff; white-space: nowrap; pointer-events: none !important; z-index: 6; }
+
 /* ---- モーダル ---- */
 #modal { position: fixed; inset: 0; display: none; place-items: center; background: rgba(4,6,12,.62); z-index: 20; touch-action: auto; }
 #modal.on { display: grid; }

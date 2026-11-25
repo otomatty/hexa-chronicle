@@ -85,6 +85,9 @@ float hcFbm(vec2 p) {
   for (int i = 0; i < 4; i++) { s += a * hcN(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
   return s / 0.9375;
 }
+float hcFbm2(vec2 p) {
+  return (hcN(p) * 0.6 + hcN(p * 2.03 + vec2(17.1, 9.2)) * 0.3 + hcN(p * 4.1 + vec2(3.7, 28.4)) * 0.15) / 1.05;
+}
 // ゆっくり流れる雲の影
 float hcCloud(vec2 p) {
   float c = hcFbm(p * 0.045 + vec2(uTime * 0.011, uTime * 0.006));
@@ -178,6 +181,8 @@ vec3 hcParchment(vec2 p) {
 }
 vec3 hcFog(vec3 col, vec2 p) {
   vec4 v = hcVis(p);
+  // 完全に視界内なら何もしない（画面の大半はここで終わる）
+  if (v.r > 0.995 && v.g > 0.995) return col;
   float wob = (hcN(p * 1.9) - 0.5) * 0.32 * step(0.02, v.r) * step(v.r, 0.98);
   float e = smoothstep(0.28, 0.62, v.r + wob);
   float vis = smoothstep(0.15, 0.8, v.g);
@@ -206,7 +211,7 @@ const HC_TERRAIN_COLOR = /* glsl */ `
   {
     vec2 q = vHcPos.xz;
     float land = step(0.0, vHcPos.y);
-    float big = hcFbm(q * 0.55);
+    float big = hcFbm2(q * 0.55);
     float dn = hcFbm(q * 2.3);
     float fine = hcN(q * 27.0);
     vec3 c = diffuseColor.rgb;
@@ -216,15 +221,24 @@ const HC_TERRAIN_COLOR = /* glsl */ `
     vec3 grassC = c * mix(vec3(0.84, 0.95, 0.78), vec3(1.08, 1.05, 0.9), big) * (0.86 + 0.22 * blades * fine + 0.1 * dn);
     // 砂：風紋
     float sd = vMat.y;
-    float rip = sin((q.x * 0.8 + q.y * 0.6) * 44.0 + hcFbm(q * 1.4) * 9.0);
-    vec3 sandC = c * (0.94 + 0.06 * rip * land + 0.12 * (dn - 0.5)) * mix(vec3(0.97), vec3(1.07, 0.99, 0.88), big);
+    vec3 sandC = c;
+    if (sd > 0.02) {
+      float rip = sin((q.x * 0.8 + q.y * 0.6) * 44.0 + hcFbm2(q * 1.4) * 9.0);
+      sandC = c * (0.94 + 0.06 * rip * land + 0.12 * (dn - 0.5)) * mix(vec3(0.97), vec3(1.07, 0.99, 0.88), big);
+    }
     // 雪：青みのある陰影ときらめき
-    vec3 snowC = mix(c * vec3(0.84, 0.91, 1.02), c * 1.05, smoothstep(0.3, 0.7, dn));
-    snowC += step(0.988, hcHash(floor(q * 95.0))) * 0.3;
+    vec3 snowC = c;
+    if (vMat.z > 0.02) {
+      snowC = mix(c * vec3(0.84, 0.91, 1.02), c * 1.05, smoothstep(0.3, 0.7, dn));
+      snowC += step(0.988, hcHash(floor(q * 95.0))) * 0.3;
+    }
     // 岩：地層と割れ目
-    float strata = sin(vHcPos.y * 34.0 + hcFbm(q * 3.0) * 7.0);
-    float crack = 1.0 - smoothstep(0.0, 0.07, abs(hcN(q * 7.0) - 0.5));
-    vec3 rockC = c * (0.9 + 0.1 * strata) * (1.0 - 0.32 * crack) * (0.82 + 0.36 * dn);
+    vec3 rockC = c;
+    if (vMat.w > 0.02) {
+      float strata = sin(vHcPos.y * 34.0 + hcFbm2(q * 3.0) * 7.0);
+      float crack = 1.0 - smoothstep(0.0, 0.07, abs(hcN(q * 7.0) - 0.5));
+      rockC = c * (0.9 + 0.1 * strata) * (1.0 - 0.32 * crack) * (0.82 + 0.36 * dn);
+    }
     float wsum = gr + sd + vMat.z + vMat.w + 0.0001;
     vec3 generic = c * (0.78 + 0.44 * dn) * (0.94 + 0.12 * fine * land);
     vec3 tex = (grassC * gr + sandC * sd + snowC * vMat.z + rockC * vMat.w) / wsum;
@@ -281,9 +295,9 @@ const HC_TERRAIN_NORMAL = /* glsl */ `
   {
     float be = 0.045;
     vec2 bp = vHcPos.xz * 4.6;
-    float b0 = hcFbm(bp);
-    float bx = hcFbm(bp + vec2(be * 4.6, 0.0));
-    float bz = hcFbm(bp + vec2(0.0, be * 4.6));
+    float b0 = hcFbm2(bp);
+    float bx = hcFbm2(bp + vec2(be * 4.6, 0.0));
+    float bz = hcFbm2(bp + vec2(0.0, be * 4.6));
     float bs = (vHcPos.y > 0.0 ? 0.045 : 0.01) + vMat.w * 0.09 + vMat.y * 0.02;
     vec3 wn = vec3(b0 - bx, 0.0, b0 - bz) * (bs / be);
     normal = normalize(normal + (viewMatrix * vec4(wn, 0.0)).xyz);

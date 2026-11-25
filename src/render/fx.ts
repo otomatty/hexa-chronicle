@@ -32,6 +32,8 @@ export class Fx {
   private grow = new Float32Array(MAX);
   private alpha = new Float32Array(MAX);
   private next = 0;
+  /** 生きている粒子があるか（無ければ更新もバッファ転送もしない） */
+  live = false;
   private geo = new THREE.BufferGeometry();
   private mat: THREE.ShaderMaterial;
   private tmp = new THREE.Color();
@@ -78,6 +80,7 @@ export class Fx {
   }
 
   burst(x: number, y: number, z: number, b: Burst): void {
+    this.live = true;
     for (let k = 0; k < b.count; k++) {
       const i = this.next;
       this.next = (this.next + 1) % MAX;
@@ -117,8 +120,11 @@ export class Fx {
   }
 
   update(dt: number): void {
+    if (!this.live) return;
+    let any = false;
     for (let i = 0; i < MAX; i++) {
       if (this.life[i] <= 0) { this.size[i] = 0; continue; }
+      any = true;
       this.life[i] -= dt;
       const t = Math.max(0, this.life[i] / this.maxLife[i]);
       this.vel[i * 3 + 1] -= this.grav[i] * dt;
@@ -130,6 +136,7 @@ export class Fx {
       this.size[i] = this.size0[i] * (1 + (this.grow[i] - 1) * (1 - t));
       this.col[i * 4 + 3] = this.alpha[i] * Math.min(1, t * 2.5);
     }
+    this.live = any;
     this.geo.attributes.position.needsUpdate = true;
     this.geo.attributes.aColor.needsUpdate = true;
     this.geo.attributes.aSize.needsUpdate = true;

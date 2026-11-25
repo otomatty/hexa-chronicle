@@ -246,19 +246,31 @@ function proceduralGeos(): Record<string, Geo> {
   };
 }
 
-interface Item { key: string; x: number; z: number; rot: number; sxz: number; sy: number; r: number; g: number; b: number; sink: number }
+interface Item { chunk: number; key: string; x: number; z: number; rot: number; sxz: number; sy: number; r: number; g: number; b: number; sink: number }
 
 const NO_SHADOW = new Set(['farm', 'fish', 'tuft', 'pebble', 'deadbush', 'reed']);
+/** 遠景では描かない細かい装飾 */
+const SMALL = new Set(['tuft', 'pebble', 'deadbush', 'bush', 'reed']);
+const CHUNK_W = 10, CHUNK_H = 7;
 
 export class Props {
   readonly root = new THREE.Group();
   private geo = geos();
   private mat: THREE.MeshStandardMaterial;
   private sig = '';
+  private small: THREE.Object3D[] = [];
+  private far = false;
 
   /** rich: 草むらや小石などの細かい装飾も置くか */
   constructor(private field: Field, uniforms: MapUniforms, private rich: boolean) {
     this.mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }), uniforms, 'prop', rich);
+  }
+
+  /** 遠景では草むらや小石を省く */
+  setFar(far: boolean): void {
+    if (far === this.far) return;
+    this.far = far;
+    for (const m of this.small) m.visible = !far;
   }
 
   /** 地物や改良が変わったときだけ作り直す */
@@ -286,8 +298,9 @@ export class Props {
       const t = s.tiles[i];
       if (t.terrain === 'ocean') continue;
       const cx = f.tx(i), cz = f.tz(i);
+      const chunk = Math.floor(((i / s.w) | 0) / CHUNK_H) * 64 + Math.floor((i % s.w) / CHUNK_W);
       const add = (key: string, x: number, z: number, rot: number, sxz: number, sy = sxz, tint: [number, number, number] = [1, 1, 1], sink = 0.01) =>
-        items.push({ key, x, z, rot, sxz, sy, r: tint[0], g: tint[1], b: tint[2], sink });
+        items.push({ chunk, key, x, z, rot, sxz, sy, r: tint[0], g: tint[1], b: tint[2], sink });
       /** タイル内にばらまく。pick でインスタンスごとに種類を選べる */
       const scatter = (pick: string | ((h: number) => string), count: number, radius: number, sc: number, inner = 0, salt = 0, tint: [number, number, number] = [1, 1, 1]) => {
         for (let k = 0; k < count; k++) {
@@ -363,14 +376,18 @@ export class Props {
       }
       if (t.camp) add('camp', cx, cz, hash(i, 13) * 6.28, 1);
     }
+    // 種類 × 区画ごとに 1 つの InstancedMesh にまとめ、区画単位で画面外を省く
     const by = new Map<string, Item[]>();
     for (const it of items) {
-      let a = by.get(it.key);
-      if (!a) by.set(it.key, (a = []));
+      const k = it.key + '|' + it.chunk;
+      let a = by.get(k);
+      if (!a) by.set(k, (a = []));
       a.push(it);
     }
+    this.small = [];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
-    for (const [key, arr] of by) {
+    for (const arr of by.values()) {
+      const key = arr[0].key;
       const mesh = new THREE.InstancedMesh(this.geo[key], this.mat, arr.length);
       arr.forEach((it, k) => {
         q.setFromAxisAngle(up, it.rot);
@@ -379,9 +396,10 @@ export class Props {
         mesh.setMatrixAt(k, m);
         mesh.setColorAt(k, col.setRGB(it.r, it.g, it.b));
       });
+      mesh.computeBoundingSphere();
+      if (SMALL.has(key)) { this.small.push(mesh); mesh.visible = !this.far; }
       mesh.castShadow = !NO_SHADOW.has(key);
       mesh.receiveShadow = true;
-      mesh.frustumCulled = false;
       this.root.add(mesh);
     }
   }

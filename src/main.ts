@@ -16,10 +16,10 @@ const hudEl = document.getElementById('hud')!;
 const modalEl = document.getElementById('modal')!;
 const params = new URLSearchParams(location.search);
 
-interface Prefs { quality: Quality; grid: boolean }
+interface Prefs { quality: Quality; grid: boolean; perf: boolean; autoScale: boolean }
 function loadPrefs(): Prefs {
   const coarse = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
-  const def: Prefs = { quality: coarse ? 'low' : 'medium', grid: true };
+  const def: Prefs = { quality: coarse ? 'low' : 'medium', grid: true, perf: false, autoScale: true };
   try { return { ...def, ...JSON.parse(localStorage.getItem(K_PREFS) ?? '{}') }; } catch { return def; }
 }
 const prefs = loadPrefs();
@@ -52,6 +52,8 @@ class Game implements GameApi {
   busy = false;
   quality = prefs.quality;
   grid = prefs.grid;
+  perf = prefs.perf || location.hash === '#perf' || params.has('perf');
+  autoScale = prefs.autoScale;
   view!: GameView;
   hud: Hud;
   private ended = false;
@@ -85,6 +87,7 @@ class Game implements GameApi {
     });
     this.view.revealAll = params.has('reveal');
     this.view.setGrid(this.grid);
+    this.view.setAutoScale(this.autoScale);
     if (old) Object.assign(this.view.cam, old);
     this.view.sync(this.state);
   }
@@ -363,6 +366,13 @@ class Game implements GameApi {
     store.set(K_PREFS, JSON.stringify(prefs));
     this.view.setGrid(on);
   }
+  setPerf(on: boolean): void { this.perf = prefs.perf = on; store.set(K_PREFS, JSON.stringify(prefs)); }
+  setAutoScale(on: boolean): void {
+    this.autoScale = prefs.autoScale = on;
+    store.set(K_PREFS, JSON.stringify(prefs));
+    this.view.setAutoScale(on);
+  }
+  perfStats(): { fps: number; ms: number; calls: number; tris: number; scale: number } { return this.view.stats; }
   toTitle(): void { title(); }
 
   private key(e: KeyboardEvent): void {
