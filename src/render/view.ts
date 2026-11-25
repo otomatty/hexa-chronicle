@@ -1,12 +1,12 @@
 // 3Dビュー全体：レンダラー、カメラ操作、ユニット／都市の表示、ラベル、ピッキング、演出。
 import * as THREE from 'three';
-import { UNITS } from '../core/data';
+import { UNITS, WONDERS } from '../core/data';
 import { cityAt, civAt, eraOf, isEmbarked, milAt } from '../core/game';
 import { HEX, SQ3, worldToTile } from '../core/hex';
 import type { GameEvent, GameState } from '../core/types';
 import { Fx } from './fx';
 import { planDistricts } from './districts';
-import { cityGeometry, districtGeometry, unitGeometry } from './models';
+import { cityGeometry, districtGeometry, poseUnit, unitGeometry } from './models';
 import { hash } from './geo';
 import { Post } from './post';
 import { Props } from './props';
@@ -32,6 +32,11 @@ interface UnitView {
   lunge: { dx: number; dz: number; t: number } | null;
   phase: number;
   hit: number;
+  /** 共有している元の形状と、ポーズ中だけ持つ変形用の複製 */
+  base: THREE.BufferGeometry;
+  rig: THREE.BufferGeometry | null;
+  /** 遠隔攻撃の構えの残り時間 */
+  aim: number;
   dying: number;
   tile: number;
 }
@@ -85,6 +90,8 @@ export class GameView {
   private timers: { at: number; fn: () => void }[] = [];
   private emitters = new Map<number, Emitter[]>();
   private campEmitters: Emitter[] = [];
+  private wonderEmitters: Emitter[] = [];
+  private wonderLabels: { el: HTMLDivElement; tile: number }[] = [];
   private smokeClock = 0;
   private unitMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, flatShading: true });
   private cityMat: THREE.MeshStandardMaterial;
@@ -166,6 +173,20 @@ export class GameView {
     this.ringMesh.renderOrder = 3;
     this.scene.add(this.fx.points);
     this.scene.add(this.ringMesh);
+
+    // 自然遺産：名前のラベルと、火口の煙・温泉の湯気
+    s.tiles.forEach((t, i) => {
+      if (!t.wonder) return;
+      const el = document.createElement('div');
+      el.className = 'wlabel';
+      el.textContent = '✦ ' + WONDERS[t.wonder].name;
+      el.style.display = 'none';
+      this.labels.appendChild(el);
+      this.wonderLabels.push({ el, tile: i });
+      if (t.wonder === 'crater' || t.wonder === 'springs') {
+        this.wonderEmitters.push({ x: this.field.tx(i), y: this.field.tileGround(i) + (t.wonder === 'crater' ? 0.75 : 0.25), z: this.field.tz(i), tile: i, dark: t.wonder === 'crater' });
+      }
+    });
 
     this.bindInput();
     this.resize();
@@ -464,7 +485,7 @@ export class GameView {
     flag.innerHTML = `<span>${UNITS[u.type].icon}</span><i><u></u></i>`;
     flag.addEventListener('click', (e) => { e.stopPropagation(); this.cb.onUnitClick(id); });
     this.labels.appendChild(flag);
-    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, phase: id * 1.7, hit: 0, dying: 0, tile: at };
+    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, phase: id * 1.7, hit: 0, base: mesh.geometry, rig: null, aim: 0, dying: 0, tile: at };
     this.units.set(id, uv);
     return uv;
   }
@@ -473,6 +494,7 @@ export class GameView {
     const uv = this.units.get(id);
     if (!uv) return;
     this.scene.remove(uv.mesh);
+    uv.rig?.dispose();
     uv.flag.remove();
     this.units.delete(id);
   }
@@ -492,7 +514,10 @@ export class GameView {
       if (uv.key !== key) {
         uv.key = key;
         const p = s.players[u.owner];
-        uv.mesh.geometry = unitGeometry(key.split(':')[0], colorNum(p.color), colorNum(p.color2));
+        uv.base = unitGeometry(key.split(':')[0], colorNum(p.color), colorNum(p.color2));
+        uv.rig?.dispose();
+        uv.rig = null;
+        uv.mesh.geometry = uv.base;
         uv.flag.style.setProperty('--c', p.color);
         uv.flag.style.setProperty('--c2', p.color2);
       }
@@ -543,6 +568,7 @@ export class GameView {
         if (e.ranged) {
           a.y += heavy ? 0.3 : 0.45; b.y += 0.3;
           if (heavy) this.fx.blast(a.x, a.y, a.z);
+          if (uv) uv.aim = 0.55;
           const n = heavy ? 1 : 3;
           for (let k = 0; k < n; k++) {
             const mesh = new THREE.Mesh(heavy ? BALL_GEO : ARROW_GEO, heavy ? BALL_MAT : ARROW_MAT);
@@ -655,8 +681,25 @@ export class GameView {
         if (uv.dying >= 1) this.dropUnit(id);
         continue;
       }
-      // 歩行中は左右に揺らし、待機中はわずかに呼吸させる
-      if (uv.queue.length) { uv.phase += dt * 15; m.rotation.z = Math.sin(uv.phase) * 0.07; m.rotation.x = 0.06; }
+      // 関節のポーズ：歩行・近接攻撃の振り・遠隔攻撃の構え
+      const walking = uv.queue.length > 0;
+      if (uv.aim > 0) uv.aim -= dt;
+      if (walking || uv.lunge || uv.aim > 0) {
+        if (!uv.rig) { uv.rig = uv.base.clone(); m.geometry = uv.rig; }
+        let strike = 0;
+        if (uv.lunge) {
+          const t = Math.min(1, uv.lunge.t);
+          strike = t < 0.35 ? 0.9 * (t / 0.35) : t < 0.6 ? 0.9 - 2.6 * ((t - 0.35) / 0.25) : -1.7 * (1 - (t - 0.6) / 0.4);
+        }
+        const aim = uv.aim > 0 ? -1.45 * Math.min(1, uv.aim / 0.12, (0.55 - uv.aim) / 0.1 + 0.3) : 0;
+        poseUnit(uv.base, uv.rig, uv.phase, walking ? 1 : 0, strike + (uv.aim > 0 ? 0.5 : 0), aim);
+      } else if (uv.rig) {
+        m.geometry = uv.base;
+        uv.rig.dispose();
+        uv.rig = null;
+      }
+      // 歩行中はわずかに前傾、待機中は呼吸
+      if (walking) { uv.phase += dt * 13; m.rotation.z = Math.sin(uv.phase) * 0.03; m.rotation.x = 0.05; }
       else if (uv.hit > 0) { uv.hit -= dt; m.rotation.x = Math.sin(uv.hit * 55) * 0.2 * (uv.hit / 0.35); }
       else { m.rotation.z *= 0.8; m.rotation.x *= 0.8; m.scale.y = UNIT_SCALE * (1 + Math.sin(time * 2.1 + uv.phase) * 0.014); }
       if (uv.queue.length) {
@@ -703,6 +746,7 @@ export class GameView {
       };
       for (const list of this.emitters.values()) list.forEach(emit);
       this.campEmitters.forEach(emit);
+      this.wonderEmitters.forEach(emit);
     }
     this.fx.update(dt);
     const sel = this.units.get(this.selectedUnit);
@@ -738,6 +782,10 @@ export class GameView {
       if (!cv.mesh.visible) continue;
       const p = cv.mesh.position;
       put(cv.label, p.x, p.y + 1.5, p.z);
+    }
+    for (const wl of this.wonderLabels) {
+      if (this.visOf(wl.tile) === 0 || far) { if (wl.el.style.display !== 'none') wl.el.style.display = 'none'; continue; }
+      put(wl.el, this.field.tx(wl.tile), this.field.tileGround(wl.tile) + 1.45, this.field.tz(wl.tile));
     }
   }
 }

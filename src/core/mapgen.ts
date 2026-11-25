@@ -1,5 +1,6 @@
 // マップ生成。シード値から決定論的に大陸・気候・資源・初期位置を作る。
 import { fbm, hexDist, neighborTable, nextRand, tilesInRange, tileX, tileZ } from './hex';
+import { WONDERS } from './data';
 import type { Feature, Terrain, Tile } from './types';
 
 const smooth = (a: number, b: number, x: number) => {
@@ -30,7 +31,7 @@ export function generateMap(w: number, h: number, seed: number, nPlayers: number
   const land: number[] = [];
   for (let i = 0; i < n; i++) {
     const isLand = val[i] > sea;
-    tiles.push({ terrain: isLand ? 'grass' : 'ocean', elev: 0, feature: '', resource: '', improvement: '', owner: -1, cityId: -1, camp: false, river: 0 });
+    tiles.push({ terrain: isLand ? 'grass' : 'ocean', elev: 0, feature: '', resource: '', improvement: '', owner: -1, cityId: -1, camp: false, river: 0, wonder: '' });
     if (isLand) land.push(i);
   }
 
@@ -236,6 +237,38 @@ export function generateMap(w: number, h: number, seed: number, nPlayers: number
     tiles[s0].feature = '';
     tiles[s0].resource = '';
   }
+  // --- 自然遺産：初期位置から離れた陸地に、互いに距離を取って置く
+  {
+    const keys = Object.keys(WONDERS);
+    for (let i = keys.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [keys[i], keys[j]] = [keys[j], keys[i]];
+    }
+    const want = Math.max(3, Math.min(keys.length, Math.round(land.length / 150)));
+    const placed: number[] = [];
+    for (const k of keys.slice(0, want)) {
+      const def = WONDERS[k];
+      const ok = (i: number, strict: boolean) => {
+        const t = tiles[i];
+        if (t.elev === 2 || t.river || t.wonder) return false;
+        if (strict && !def.prefer.includes(t.terrain)) return false;
+        if (starts.some((s0) => hexDist(w, s0, i) < 4) || placed.some((p0) => hexDist(w, p0, i) < 8)) return false;
+        const r = (i / w) | 0, c = i % w;
+        return r >= 2 && r < h - 2 && c >= 2 && c < w - 2;
+      };
+      let pool = land.filter((i) => ok(i, true));
+      if (!pool.length) pool = land.filter((i) => ok(i, false));
+      if (!pool.length) continue;
+      const i = pool[Math.floor(rand() * pool.length)];
+      const t = tiles[i];
+      t.wonder = k;
+      t.feature = '';
+      t.resource = '';
+      t.elev = def.hill ? 1 : 0;
+      placed.push(i);
+    }
+  }
+
   // 順番による有利不利を消す
   for (let i = starts.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));

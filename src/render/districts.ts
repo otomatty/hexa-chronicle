@@ -22,7 +22,7 @@ export function planDistricts(s: GameState, c: City): DistrictPlan[] {
     return (t.resource ? 4 : 0) + (t.feature ? 2 : 0) + (t.improvement ? 1 : 0) + (t.elev === 1 ? 0.5 : 0) + (t.river ? 0.3 : 0) + hash(c.id, i) * 0.9;
   };
   const free = ring
-    .filter((i) => { const t = s.tiles[i]; return t.cityId === c.id && !isWater(t) && t.elev < 2 && !t.camp; })
+    .filter((i) => { const t = s.tiles[i]; return t.cityId === c.id && !isWater(t) && t.elev < 2 && !t.camp && !t.wonder; })
     .sort((a, b) => cost(a) - cost(b));
   const plan: DistrictPlan[] = [];
   for (const [kind, list] of GROUPS) {

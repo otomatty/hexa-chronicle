@@ -1,6 +1,6 @@
 // クライアントのエントリーポイント。ゲーム状態・3Dビュー・HUD を仲介する。
 import { runAI } from './core/ai';
-import { CIVS, PROJECTS, TECHS, UNITS, itemName } from './core/data';
+import { CIVS, PROJECTS, TECHS, UNITS, WONDERS, itemName } from './core/data';
 import {
   applyAction, attackTargets, availableTechs, cityAt, citiesOf, createGame, deserialize, dist, milAt, needsOrders, reachable,
   serialize, unitsOf,
@@ -134,6 +134,7 @@ class Game implements GameApi {
       case 'space': hud.toast(`🚀 ${name(e.owner)}が「${Object.values(PROJECTS).find((p) => p.stage === e.stage - 1)?.name}」を達成しました（${e.stage}/3）`, e.owner === me ? 'good' : 'war'); break;
       case 'campCleared': if (e.owner === me) hud.toast(`蛮族の野営地を制圧しました（💰+${e.gold}）`, 'good', e.pos); break;
       case 'notify': if (e.owner === me) hud.toast(e.text, '', e.pos ?? -1); break;
+      case 'wonder': if (e.owner === me) hud.toast(`✦ 自然遺産「${WONDERS[e.wonder].name}」を発見しました（💰+${e.gold}）`, 'good', e.pos); break;
       case 'attack': {
         if (e.owner === me || this.attackedNotice === s.turn) break;
         const target = cityAt(s, e.to) ?? milAt(s, e.to);

@@ -20,7 +20,21 @@ export function xf(g: THREE.BufferGeometry, t: Xf): THREE.BufferGeometry {
   q.setFromEuler(e);
   m4.compose(v.set(t.x ?? 0, t.y ?? 0, t.z ?? 0), q, sc.set(t.sx ?? 1, t.sy ?? 1, t.sz ?? 1));
   g.applyMatrix4(m4);
+  // 関節の位置も一緒に動かす
+  if (g.attributes.aPivot) (g.attributes.aPivot as THREE.BufferAttribute).applyMatrix4(m4);
   return g;
+}
+
+/** パーツに「どの関節で動くか」を記録する。part: 0 胴体, 1/2 脚, 3 左腕, 4 右腕 */
+export function tag(parts: THREE.BufferGeometry[], part: number, px: number, py: number, pz: number): THREE.BufferGeometry[] {
+  for (const g of parts) {
+    const n = g.attributes.position.count;
+    const a = new Float32Array(n).fill(part), pv = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { pv[i * 3] = px; pv[i * 3 + 1] = py; pv[i * 3 + 2] = pz; }
+    g.setAttribute('aPart', new THREE.BufferAttribute(a, 1));
+    g.setAttribute('aPivot', new THREE.BufferAttribute(pv, 3));
+  }
+  return parts;
 }
 
 export const box = (w: number, h: number, d: number, color: THREE.ColorRepresentation, t: Xf = {}) =>
@@ -40,10 +54,12 @@ export function group(parts: THREE.BufferGeometry[], t: Xf): THREE.BufferGeometr
   return parts;
 }
 
-export function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+export function merge(parts: THREE.BufferGeometry[], rig = false): THREE.BufferGeometry {
+  const keep = rig ? ['position', 'normal', 'color', 'aPart', 'aPivot'] : ['position', 'normal', 'color'];
   const norm = parts.map((p) => {
+    if (rig && !p.attributes.aPart) tag([p], 0, 0, 0, 0);
     const g = p.index ? p.toNonIndexed() : p;
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'color') g.deleteAttribute(k);
+    for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k);
     return g;
   });
   const out = mergeGeometries(norm, false)!;

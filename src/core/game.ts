@@ -1,7 +1,7 @@
 // ゲームルール本体。
 // すべての変更は applyAction(state, playerId, action) を通る。乱数は state.rng に持つため、
 // 同じ初期状態に同じアクション列を与えれば必ず同じ結果になる（サーバー側実行・リプレイ可能）。
-import { BUILDINGS, CIVS, FEATURE, IMPROVEMENTS, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, Y, MAP_SIZES, BARB_COLOR } from './data';
+import { BUILDINGS, CIVS, FEATURE, IMPROVEMENTS, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, Y, MAP_SIZES, BARB_COLOR } from './data';
 import { hexDist, neighborTable, nextRand, tilesInRange } from './hex';
 import { generateMap } from './mapgen';
 import type { Action, ActionResult, City, GameEvent, GameState, NewGameOptions, Player, Tile, Unit, Yields } from './types';
@@ -104,6 +104,7 @@ export function tileYield(s: GameState, i: number): Yields {
   if (t.elev === 1) y.prod += 1;
   if (t.feature) add(FEATURE[t.feature].y);
   if (t.resource) add(RESOURCES[t.resource].y);
+  if (t.wonder) add(WONDERS[t.wonder].y);
   const owner = t.owner >= 0 ? s.players[t.owner] : null;
   if (t.improvement) {
     const d = IMPROVEMENTS[t.improvement];
@@ -455,6 +456,12 @@ export function updateVis(s: GameState, pid: number): void {
       emit(s, { type: 'met', a: pid, b: o });
     };
     seen(s.tiles[i].owner);
+    const wd = s.tiles[i].wonder;
+    if (wd && !p.wonders.includes(wd)) {
+      p.wonders.push(wd);
+      p.gold += 20;
+      emit(s, { type: 'wonder', owner: pid, wonder: wd, pos: i, gold: 20 });
+    }
     if (r.mil[i]) seen(s.units[r.mil[i]].owner);
     if (r.civ[i]) seen(s.units[r.civ[i]].owner);
   }
@@ -910,7 +917,7 @@ function cityStrike(s: GameState, c: City): void {
 // ---------------------------------------------------------------- 都市の建設・改良
 export function canFound(s: GameState, pos: number, pid: number): boolean {
   const t = s.tiles[pos];
-  if (isWater(t) || t.elev === 2) return false;
+  if (isWater(t) || t.elev === 2 || t.wonder) return false;
   if (t.owner >= 0 && t.owner !== pid) return false;
   for (const id in s.cities) if (dist(s, s.cities[id].pos, pos) < 4) return false;
   return true;
@@ -944,7 +951,7 @@ function foundCity(s: GameState, pid: number, pos: number): City {
 /** そのタイルで労働者が実行できる作業（'clear' は地物の除去） */
 export function validImprovements(s: GameState, i: number, pid: number): string[] {
   const t = s.tiles[i], p = s.players[pid];
-  if (t.owner !== pid || isWater(t) || t.elev === 2 || cityAt(s, i)) return [];
+  if (t.owner !== pid || isWater(t) || t.elev === 2 || t.wonder || cityAt(s, i)) return [];
   const out: string[] = [];
   const ok = (k: string) => !IMPROVEMENTS[k].tech || hasTech(p, IMPROVEMENTS[k].tech!);
   if (!t.improvement) {
@@ -1259,7 +1266,7 @@ export function createGame(o: NewGameOptions): GameState {
     id, civ, name: barb ? '蛮族' : CIVS[civ].name, leader: barb ? '' : CIVS[civ].leader,
     color: barb ? BARB_COLOR : CIVS[civ].color, color2: barb ? '#a33' : CIVS[civ].color2,
     human, barb, alive: true, gold: barb ? 0 : 20, techs: [], research: '', progress: {}, sciOverflow: 0,
-    spaceStage: 0, score: 0, cityNameIdx: 0, income: { gold: 0, sci: 0, cul: 0 },
+    spaceStage: 0, score: 0, cityNameIdx: 0, wonders: [], income: { gold: 0, sci: 0, cul: 0 },
   });
   civs.forEach((civ, i) => s.players.push(mk(i, civ, i === 0 && !o.allAI, false)));
   s.players.push(mk(s.players.length, 'barb', false, true));
@@ -1290,16 +1297,17 @@ export function createGame(o: NewGameOptions): GameState {
 export function serialize(s: GameState): string {
   const { events, tiles, vis, ...rest } = s;
   void events;
-  const packed = tiles.map((t) => [t.terrain, t.elev, t.feature, t.resource, t.improvement, t.owner, t.cityId, t.camp ? 1 : 0, t.river]);
+  const packed = tiles.map((t) => [t.terrain, t.elev, t.feature, t.resource, t.improvement, t.owner, t.cityId, t.camp ? 1 : 0, t.river, t.wonder]);
   return JSON.stringify({ ...rest, tiles: packed, vis: vis.map((v) => v.join('')) });
 }
 
 export function deserialize(json: string): GameState {
   const o = JSON.parse(json);
   if (o.version !== SAVE_VERSION) throw new Error('セーブデータのバージョンが異なります');
-  o.tiles = o.tiles.map((t: [Tile['terrain'], number, Tile['feature'], string, string, number, number, number, number?]) => ({
-    terrain: t[0], elev: t[1], feature: t[2], resource: t[3], improvement: t[4], owner: t[5], cityId: t[6], camp: !!t[7], river: t[8] ?? 0,
+  o.tiles = o.tiles.map((t: [Tile['terrain'], number, Tile['feature'], string, string, number, number, number, number?, string?]) => ({
+    terrain: t[0], elev: t[1], feature: t[2], resource: t[3], improvement: t[4], owner: t[5], cityId: t[6], camp: !!t[7], river: t[8] ?? 0, wonder: t[9] ?? '',
   }));
+  for (const p of o.players) p.wonders ??= [];
   o.vis = o.vis.map((v: string) => Array.from(v, Number));
   o.events = [];
   return o as GameState;

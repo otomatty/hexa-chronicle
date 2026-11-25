@@ -27,6 +27,8 @@ export interface Tile {
   camp: boolean;
   /** 川が流れている辺のビットマスク（bit d = 隣接方向 d との境界） */
   river: number;
+  /** 自然遺産の種類（なければ空文字） */
+  wonder: string;
 }
 
 export interface Unit {
@@ -96,6 +98,8 @@ export interface Player {
   spaceStage: number;
   score: number;
   cityNameIdx: number;
+  /** 発見済みの自然遺産 */
+  wonders: string[];
   /** 直近ターンの収支（表示用） */
   income: { gold: number; sci: number; cul: number };
 }
@@ -140,6 +144,7 @@ export type GameEvent =
   | { type: 'campCleared'; owner: number; pos: number; gold: number }
   | { type: 'needProduction'; city: number; owner: number }
   | { type: 'notify'; owner: number; text: string; pos?: number }
+  | { type: 'wonder'; owner: number; wonder: string; pos: number; gold: number }
   | { type: 'victory'; winner: Winner }
   | { type: 'turn'; player: number };
 

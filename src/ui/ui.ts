@@ -1,5 +1,5 @@
 // HUD とモーダル。DOM を直接組み立てる軽量な実装（フレームワーク不使用）。
-import { BUILDINGS, CIVS, DIFFICULTY, ERAS, FEATURE, IMPROVEMENTS, MAP_SIZES, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, itemName } from '../core/data';
+import { BUILDINGS, CIVS, DIFFICULTY, ERAS, FEATURE, IMPROVEMENTS, MAP_SIZES, PROJECTS, RESOURCES, TECHS, TERRAIN, UNITS, WONDERS, itemName } from '../core/data';
 import {
   attackTargets, availableItems, availableTechs, buyCost, canFound, cityAt, citiesOf, cityStrength, cityYields, civAt, eraOf,
   growthCost, itemCost, majors, maxMoves, milAt, militaryPower, tileYield, unitMaintenance, unitStrength, validImprovements,
@@ -388,6 +388,7 @@ export class Hud {
     if (t.elev === 1) names.push('丘陵');
     if (t.feature) names.push(FEATURE[t.feature].name);
     let h = `<b>${names.join('・')}</b>`;
+    if (t.wonder) h = `<b style="color:var(--gold)">✦ ${WONDERS[t.wonder].name}</b><div style="color:var(--dim)">自然遺産・${WONDERS[t.wonder].desc}</div>` + h;
     if (t.elev !== 2) h += `<div>${yieldStr(tileYield(s, i))}</div>`;
     if (t.resource) h += `<div>${RESOURCES[t.resource].icon} ${RESOURCES[t.resource].name}</div>`;
     if (t.improvement) h += `<div>🔧 ${IMPROVEMENTS[t.improvement].name}</div>`;

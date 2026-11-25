@@ -64,7 +64,7 @@ function barbarians(s: GameState, pid: number): void {
     for (let k = 0; k < 40; k++) {
       const i = Math.floor(rand(s) * s.tiles.length);
       const t = s.tiles[i];
-      if (isWater(t) || t.elev === 2 || t.owner >= 0 || milAt(s, i) || civAt(s, i)) continue;
+      if (isWater(t) || t.elev === 2 || t.wonder || t.owner >= 0 || milAt(s, i) || civAt(s, i)) continue;
       if (s.camps.some((c) => dist(s, c.pos, i) < 7)) continue;
       if (Object.values(s.cities).some((c) => dist(s, c.pos, i) < 5)) continue;
       if (majors(s).some((p) => s.vis[p.id][i] === 2)) continue;

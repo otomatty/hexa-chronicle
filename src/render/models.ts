@@ -1,27 +1,23 @@
 // ユニットと都市のプロシージャルモデル。外部アセットを使わず、プリミティブの組み合わせで作る。
 import * as THREE from 'three';
-import { ball, box, cone, cyl, group, hash, merge, ring } from './geo';
+import { ball, box, cone, cyl, group, hash, merge, ring, tag } from './geo';
 
 type Geo = THREE.BufferGeometry;
 const SKIN = 0xe0b48c, WOOD = 0x6b4a2c, DARK = 0x2a2622, STEEL = 0xb8bcc4, IRON = 0x55585e, LEATHER = 0x7a5a36;
 
-interface Fig { tunic: number; legs?: number; hat?: 'helmet' | 'cap' | 'tricorn' | 'hood' | 'feather' | 'steel'; hatColor?: number; weapon?: string; shield?: number; scale?: number }
+interface Fig { noLegs?: boolean; tunic: number; legs?: number; hat?: 'helmet' | 'cap' | 'tricorn' | 'hood' | 'feather' | 'steel'; hatColor?: number; weapon?: string; shield?: number; scale?: number }
 
 /** 人型フィギュア（+z 向き） */
 function figure(f: Fig): Geo[] {
   const legs = f.legs ?? DARK;
+  const legL = [cyl(0.03, 0.025, 0.15, 6, legs, { x: -0.037, y: 0.085 }), box(0.05, 0.028, 0.08, DARK, { x: -0.037, y: 0.014, z: 0.012 })];
+  const legR = [cyl(0.03, 0.025, 0.15, 6, legs, { x: 0.037, y: 0.085 }), box(0.05, 0.028, 0.08, DARK, { x: 0.037, y: 0.014, z: 0.012 })];
+  const armL = [cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: -0.108, y: 0.27, rz: -0.2 }), ball(0.024, SKIN, { x: -0.124, y: 0.19 }, 5, 4)];
+  const armR = [cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: 0.108, y: 0.27, rz: 0.2 }), ball(0.024, SKIN, { x: 0.124, y: 0.19 }, 5, 4)];
   const p: Geo[] = [
-    cyl(0.03, 0.025, 0.15, 6, legs, { x: -0.037, y: 0.085 }),
-    cyl(0.03, 0.025, 0.15, 6, legs, { x: 0.037, y: 0.085 }),
-    box(0.05, 0.028, 0.08, DARK, { x: -0.037, y: 0.014, z: 0.012 }),
-    box(0.05, 0.028, 0.08, DARK, { x: 0.037, y: 0.014, z: 0.012 }),
     cyl(0.072, 0.096, 0.09, 7, f.tunic, { y: 0.175 }),
     cyl(0.088, 0.07, 0.14, 7, f.tunic, { y: 0.285 }),
     cyl(0.076, 0.076, 0.022, 7, LEATHER, { y: 0.212 }),
-    cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: -0.108, y: 0.27, rz: -0.2 }),
-    cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: 0.108, y: 0.27, rz: 0.2 }),
-    ball(0.024, SKIN, { x: -0.124, y: 0.19 }, 5, 4),
-    ball(0.024, SKIN, { x: 0.124, y: 0.19 }, 5, 4),
     ball(0.06, SKIN, { y: 0.4 }, 8, 6),
   ];
   const hc = f.hatColor ?? STEEL;
@@ -33,29 +29,33 @@ function figure(f: Fig): Geo[] {
   else if (f.hat === 'hood') { p.push(cone(0.072, 0.11, 7, hc, { y: 0.47 })); p.push(cyl(0.09, 0.1, 0.05, 7, hc, { y: 0.335 })); }
   else if (f.hat === 'feather') { p.push(cyl(0.064, 0.064, 0.022, 8, hc, { y: 0.45 })); p.push(cone(0.02, 0.12, 4, 0xd9432b, { y: 0.52, z: -0.03, rx: -0.3 })); }
   switch (f.weapon) {
-    case 'club': p.push(cyl(0.028, 0.014, 0.24, 5, WOOD, { x: 0.12, y: 0.32, rx: 0.5 })); break;
-    case 'axe': p.push(cyl(0.012, 0.012, 0.26, 4, WOOD, { x: 0.12, y: 0.32, rx: 0.4 })); p.push(box(0.02, 0.07, 0.08, STEEL, { x: 0.12, y: 0.43, z: 0.07 })); break;
-    case 'sword': p.push(box(0.018, 0.24, 0.03, STEEL, { x: 0.125, y: 0.36, rx: 0.5 })); p.push(box(0.07, 0.016, 0.02, 0xc9a23a, { x: 0.125, y: 0.27, z: -0.05 })); break;
-    case 'spear': p.push(cyl(0.01, 0.01, 0.58, 4, WOOD, { x: 0.125, y: 0.33 })); p.push(cone(0.022, 0.07, 4, STEEL, { x: 0.125, y: 0.655 })); break;
-    case 'pike': p.push(cyl(0.01, 0.01, 0.78, 4, WOOD, { x: 0.125, y: 0.42, rx: 0.12 })); p.push(cone(0.022, 0.08, 4, STEEL, { x: 0.125, y: 0.85, z: 0.05 })); break;
+    case 'club': armR.push(cyl(0.028, 0.014, 0.24, 5, WOOD, { x: 0.12, y: 0.32, rx: 0.5 })); break;
+    case 'axe': armR.push(cyl(0.012, 0.012, 0.26, 4, WOOD, { x: 0.12, y: 0.32, rx: 0.4 })); armR.push(box(0.02, 0.07, 0.08, STEEL, { x: 0.12, y: 0.43, z: 0.07 })); break;
+    case 'sword': armR.push(box(0.018, 0.24, 0.03, STEEL, { x: 0.125, y: 0.36, rx: 0.5 })); armR.push(box(0.07, 0.016, 0.02, 0xc9a23a, { x: 0.125, y: 0.27, z: -0.05 })); break;
+    case 'spear': armR.push(cyl(0.01, 0.01, 0.58, 4, WOOD, { x: 0.125, y: 0.33 })); armR.push(cone(0.022, 0.07, 4, STEEL, { x: 0.125, y: 0.655 })); break;
+    case 'pike': armR.push(cyl(0.01, 0.01, 0.78, 4, WOOD, { x: 0.125, y: 0.42, rx: 0.12 })); armR.push(cone(0.022, 0.08, 4, STEEL, { x: 0.125, y: 0.85, z: 0.05 })); break;
     case 'bow': {
       const g = new THREE.TorusGeometry(0.13, 0.01, 4, 8, Math.PI);
-      p.push(group([paintGeo(g, WOOD)], { x: -0.13, y: 0.27, z: 0.05, rz: -Math.PI / 2, ry: Math.PI / 2 })[0]);
+      armL.push(group([paintGeo(g, WOOD)], { x: -0.13, y: 0.27, z: 0.05, rz: -Math.PI / 2, ry: Math.PI / 2 })[0]);
       p.push(box(0.025, 0.14, 0.04, LEATHER, { y: 0.27, z: -0.07 }));
       break;
     }
-    case 'crossbow': p.push(box(0.03, 0.03, 0.24, WOOD, { x: 0.1, y: 0.25, z: 0.1 })); p.push(box(0.22, 0.02, 0.025, IRON, { x: 0.1, y: 0.255, z: 0.2 })); break;
-    case 'musket': p.push(box(0.022, 0.03, 0.4, 0x4a3520, { x: 0.11, y: 0.27, z: 0.08, rx: -0.5 })); p.push(box(0.012, 0.012, 0.1, STEEL, { x: 0.11, y: 0.4, z: 0.3, rx: -0.5 })); break;
-    case 'rifle': p.push(box(0.02, 0.03, 0.36, DARK, { x: 0.11, y: 0.26, z: 0.1, rx: -0.2 })); break;
-    case 'staff': p.push(cyl(0.012, 0.012, 0.46, 4, WOOD, { x: 0.125, y: 0.24 })); break;
-    case 'hammer': p.push(cyl(0.012, 0.012, 0.22, 4, WOOD, { x: 0.125, y: 0.3, rx: 0.6 })); p.push(box(0.05, 0.05, 0.09, IRON, { x: 0.125, y: 0.4, z: 0.07 })); break;
-    case 'saber': p.push(box(0.014, 0.26, 0.026, STEEL, { x: 0.13, y: 0.42, rx: 0.9 })); break;
-    case 'lance': p.push(cyl(0.012, 0.012, 0.7, 4, WOOD, { x: 0.13, y: 0.34, z: 0.2, rx: 1.15 })); p.push(cone(0.022, 0.07, 4, STEEL, { x: 0.13, y: 0.49, z: 0.55, rx: 1.15 })); break;
+    case 'crossbow': armR.push(box(0.03, 0.03, 0.24, WOOD, { x: 0.1, y: 0.25, z: 0.1 })); armR.push(box(0.22, 0.02, 0.025, IRON, { x: 0.1, y: 0.255, z: 0.2 })); break;
+    case 'musket': armR.push(box(0.022, 0.03, 0.4, 0x4a3520, { x: 0.11, y: 0.27, z: 0.08, rx: -0.5 })); armR.push(box(0.012, 0.012, 0.1, STEEL, { x: 0.11, y: 0.4, z: 0.3, rx: -0.5 })); break;
+    case 'rifle': armR.push(box(0.02, 0.03, 0.36, DARK, { x: 0.11, y: 0.26, z: 0.1, rx: -0.2 })); break;
+    case 'staff': armR.push(cyl(0.012, 0.012, 0.46, 4, WOOD, { x: 0.125, y: 0.24 })); break;
+    case 'hammer': armR.push(cyl(0.012, 0.012, 0.22, 4, WOOD, { x: 0.125, y: 0.3, rx: 0.6 })); armR.push(box(0.05, 0.05, 0.09, IRON, { x: 0.125, y: 0.4, z: 0.07 })); break;
+    case 'saber': armR.push(box(0.014, 0.26, 0.026, STEEL, { x: 0.13, y: 0.42, rx: 0.9 })); break;
+    case 'lance': armR.push(cyl(0.012, 0.012, 0.7, 4, WOOD, { x: 0.13, y: 0.34, z: 0.2, rx: 1.15 })); armR.push(cone(0.022, 0.07, 4, STEEL, { x: 0.13, y: 0.49, z: 0.55, rx: 1.15 })); break;
   }
   if (f.shield !== undefined) {
-    p.push(cyl(0.085, 0.085, 0.02, 8, f.shield, { x: -0.115, y: 0.25, z: 0.045, rx: Math.PI / 2 }));
-    p.push(cyl(0.025, 0.025, 0.03, 6, STEEL, { x: -0.115, y: 0.25, z: 0.05, rx: Math.PI / 2 }));
+    armL.push(cyl(0.085, 0.085, 0.02, 8, f.shield, { x: -0.115, y: 0.25, z: 0.045, rx: Math.PI / 2 }));
+    armL.push(cyl(0.025, 0.025, 0.03, 6, STEEL, { x: -0.115, y: 0.25, z: 0.05, rx: Math.PI / 2 }));
   }
+  // 関節：脚は腰、腕（と持ち物）は肩を軸に動く
+  if (f.noLegs) p.push(...legL, ...legR);
+  else p.push(...tag(legL, 1, -0.037, 0.165, 0), ...tag(legR, 2, 0.037, 0.165, 0));
+  p.push(...tag(armL, 3, -0.1, 0.34, 0), ...tag(armR, 4, 0.1, 0.34, 0));
   if (f.scale) group(p, { sx: f.scale, sy: f.scale, sz: f.scale });
   return p;
 }
@@ -79,16 +79,19 @@ function horse(coat: number, armor?: number): Geo[] {
     box(0.13, 0.13, 0.34, coat, { y: 0.27 }),
     box(0.07, 0.17, 0.09, coat, { y: 0.4, z: 0.19, rx: 0.5 }),
     box(0.065, 0.075, 0.15, coat, { y: 0.48, z: 0.29, rx: 0.3 }),
-    box(0.035, 0.2, 0.04, coat, { x: -0.045, y: 0.1, z: 0.13 }), box(0.035, 0.2, 0.04, coat, { x: 0.045, y: 0.1, z: 0.13 }),
-    box(0.035, 0.2, 0.04, coat, { x: -0.045, y: 0.1, z: -0.13 }), box(0.035, 0.2, 0.04, coat, { x: 0.045, y: 0.1, z: -0.13 }),
     box(0.025, 0.14, 0.03, DARK, { y: 0.25, z: -0.2, rx: -0.5 }),
+    // 対角の脚を同じ位相で動かす
+    ...tag([box(0.035, 0.2, 0.04, coat, { x: -0.045, y: 0.1, z: 0.13 })], 1, -0.045, 0.2, 0.13),
+    ...tag([box(0.035, 0.2, 0.04, coat, { x: 0.045, y: 0.1, z: -0.13 })], 1, 0.045, 0.2, -0.13),
+    ...tag([box(0.035, 0.2, 0.04, coat, { x: 0.045, y: 0.1, z: 0.13 })], 2, 0.045, 0.2, 0.13),
+    ...tag([box(0.035, 0.2, 0.04, coat, { x: -0.045, y: 0.1, z: -0.13 })], 2, -0.045, 0.2, -0.13),
   ];
   if (armor !== undefined) p.push(box(0.145, 0.09, 0.3, armor, { y: 0.28 }));
   return p;
 }
 
 function rider(f: Fig, coat: number, armor?: number): Geo[] {
-  const fig = figure({ ...f, legs: f.tunic });
+  const fig = figure({ ...f, legs: f.tunic, noLegs: true });
   group(fig, { y: 0.2, sx: 0.9, sy: 0.9, sz: 0.9 });
   return [...horse(coat, armor), ...fig];
 }
@@ -187,7 +190,7 @@ export function unitGeometry(model: string, c1: number, c2: number): Geo {
     default: p = squad({ tunic: c1 });
   }
   p.push(ring(0.5, 0.545, c1, { y: 0.015 }));
-  const g = merge(p);
+  const g = merge(p, true);
   cache.set(key, g);
   return g;
 }
@@ -348,4 +351,29 @@ export function districtGeometry(kind: DistrictKind, level: number, era: number,
     p.push(box(0.09, 0.04, 0.22, 0x6b4a2c, { x: -0.02, y: 0.03, z: 0.3 }), cyl(0.006, 0.006, 0.18, 4, 0x4a3520, { x: -0.02, y: 0.13, z: 0.3 }), box(0.1, 0.1, 0.008, 0xf1ead8, { x: -0.02, y: 0.15, z: 0.31 }));
   }
   return { geo: merge(p), smoke };
+}
+
+/**
+ * ユニットにポーズを付ける。base の頂点を、関節（aPart / aPivot）ごとに回転させて out に書き込む。
+ * walk: 歩行の位相, amp: 歩幅 (0..1), strike: 右腕の振り（ラジアン）, aim: 左腕の構え（ラジアン）
+ */
+export function poseUnit(base: Geo, out: Geo, walk: number, amp: number, strike: number, aim: number): void {
+  const src = base.attributes.position.array as Float32Array;
+  const dst = out.attributes.position.array as Float32Array;
+  const part = base.attributes.aPart.array as Float32Array;
+  const piv = base.attributes.aPivot.array as Float32Array;
+  const sw = Math.sin(walk) * 0.62 * amp;
+  const bob = Math.abs(Math.sin(walk)) * 0.014 * amp;
+  const ang = [0, sw, -sw, -sw * 0.6 + aim, sw * 0.6 + strike];
+  const sn = ang.map(Math.sin), cs = ang.map(Math.cos);
+  for (let i = 0, n = part.length; i < n; i++) {
+    const k = part[i] | 0, j = i * 3;
+    if (k === 0) { dst[j] = src[j]; dst[j + 1] = src[j + 1] + bob; dst[j + 2] = src[j + 2]; continue; }
+    const py = piv[j + 1], pz = piv[j + 2];
+    const y = src[j + 1] - py, z = src[j + 2] - pz;
+    dst[j] = src[j];
+    dst[j + 1] = py + y * cs[k] - z * sn[k] + bob;
+    dst[j + 2] = pz + y * sn[k] + z * cs[k];
+  }
+  out.attributes.position.needsUpdate = true;
 }

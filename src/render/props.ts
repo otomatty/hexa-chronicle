@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type { GameState } from '../core/types';
 import { districtTiles } from './districts';
-import { ball, box, cone, cyl, hash, ico, merge } from './geo';
+import { ball, box, cone, cyl, hash, ico, merge, xf } from './geo';
 import { patchMaterial, type MapUniforms } from './shaders';
 import type { Field } from './terrain';
 
@@ -104,7 +104,46 @@ function geos(): Record<string, Geo> {
     const a = (i / 5) * Math.PI * 2;
     tuft.push(cone(0.016, 0.07 + (i % 2) * 0.03, 3, i % 2 ? 0x7fb24a : 0x6aa23e, { x: Math.cos(a) * 0.025, z: Math.sin(a) * 0.025, y: 0.04, rz: Math.cos(a) * 0.35, rx: Math.sin(a) * 0.35 }));
   }
+  const crystals: Geo[] = [ico(0.2, 0x5a5f6a, { y: 0.05, sy: 0.5 }), ico(0.16, 0x4a4f5a, { x: 0.3, y: 0.04, z: 0.2, sy: 0.5 })];
+  const cc = [0x6fe3f0, 0xb98cf5, 0xe9f6ff, 0x57c7e8, 0x9a7df0, 0x8ff0d8, 0xd0b6ff];
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.4, r = i === 0 ? 0 : 0.16 + (i % 4) * 0.11, hgt = i === 0 ? 1.05 : 0.35 + ((i * 37) % 10) * 0.05;
+    crystals.push(cone(0.06 + (i % 3) * 0.025, hgt, 5, cc[i % cc.length], { x: Math.cos(a) * r, y: hgt * 0.42, z: Math.sin(a) * r, rz: Math.cos(a) * 0.35 * (i ? 1 : 0), rx: -Math.sin(a) * 0.35 * (i ? 1 : 0) }));
+  }
+  const terraces: Geo[] = [];
+  const pools = [0x2f9fd8, 0x4fd0d6, 0x8fe6c0, 0xf2c14e];
+  for (let i = 0; i < 4; i++) {
+    const r = 0.68 - i * 0.15, y = 0.03 + i * 0.07;
+    terraces.push(cyl(r, r + 0.04, 0.07, 14, 0xf2ead8, { y, x: i * 0.05, z: -i * 0.03 }));
+    terraces.push(cyl(r - 0.05, r - 0.05, 0.012, 14, pools[3 - i], { y: y + 0.036, x: i * 0.05, z: -i * 0.03 }));
+  }
+  terraces.push(cyl(0.1, 0.1, 0.014, 10, 0x1f6fb8, { y: 0.28, x: 0.15, z: -0.09 }));
   return {
+    // --- 自然遺産
+    w_spire: merge([
+      xf(peak(71, 0x8a7460, 0xc2a583, 2), { sx: 0.5, sy: 2.3, sz: 0.5 }), xf(peak(73, 0x7d6855, 0xb89a78, 2), { x: 0.36, z: 0.18, sx: 0.36, sy: 1.6, sz: 0.36 }),
+      xf(peak(79, 0x86705c, 0xbfa07c, 2), { x: -0.3, z: 0.26, sx: 0.32, sy: 1.25, sz: 0.32 }), xf(peak(83, 0x7a6552, 0xb39574, 2), { x: -0.12, z: -0.4, sx: 0.3, sy: 1.9, sz: 0.3 }),
+      xf(peak(89, 0x7d6855, 0xb89a78, 2), { x: 0.3, z: -0.34, sx: 0.26, sy: 0.9, sz: 0.26 }),
+    ]),
+    w_crater: merge([
+      cyl(0.3, 0.84, 0.72, 11, 0x6a5a50, { y: 0.36 }), cyl(0.36, 0.3, 0.1, 11, 0x4a403a, { y: 0.73 }),
+      cyl(0.29, 0.29, 0.02, 11, 0xff6a1e, { y: 0.785 }), cyl(0.16, 0.16, 0.022, 9, 0xffc23a, { y: 0.79 }),
+      box(0.05, 0.5, 0.03, 0xff5a1a, { x: 0.3, y: 0.42, z: 0.36, rx: 0.62, rz: -0.5 }), box(0.04, 0.4, 0.03, 0xff7a2a, { x: -0.42, y: 0.34, z: 0.1, rz: 0.72 }),
+      ico(0.13, 0x3a3432, { x: 0.62, y: 0.06, z: -0.3, sy: 0.7 }), ico(0.1, 0x4a4340, { x: -0.5, y: 0.05, z: -0.45, sy: 0.7 }),
+    ]),
+    w_springs: merge(terraces),
+    w_elder: merge([
+      cyl(0.1, 0.19, 0.8, 8, 0x5b4025, { y: 0.4 }), cone(0.09, 0.3, 5, 0x4f3820, { x: 0.2, y: 0.08, z: 0.05, rz: -1.1 }), cone(0.09, 0.3, 5, 0x4f3820, { x: -0.18, y: 0.08, z: 0.1, rz: 1.1 }),
+      cone(0.09, 0.3, 5, 0x4f3820, { x: 0.02, y: 0.08, z: -0.2, rx: -1.1 }), cyl(0.045, 0.07, 0.4, 6, 0x5b4025, { x: 0.2, y: 0.85, rz: -0.8 }), cyl(0.045, 0.07, 0.4, 6, 0x5b4025, { x: -0.2, y: 0.9, z: 0.05, rz: 0.8 }),
+      ico(0.42, 0x3c8a30, { y: 1.25, sy: 0.8 }), ico(0.33, 0x4fa03a, { x: 0.38, y: 1.08, z: 0.12, sy: 0.8 }), ico(0.31, 0x347a2a, { x: -0.38, y: 1.12, z: -0.08, sy: 0.8 }),
+      ico(0.28, 0x5aae42, { x: 0.05, y: 1.5, z: -0.2 }), ico(0.26, 0x2f7026, { x: -0.05, y: 1.05, z: 0.4, sy: 0.8 }), ico(0.2, 0x66b84a, { x: 0.25, y: 1.42, z: 0.22 }),
+    ]),
+    w_crystal: merge(crystals),
+    w_arch: merge([
+      box(0.2, 0.75, 0.24, 0xc48a5a, { x: -0.38, y: 0.36, rz: 0.08 }), box(0.18, 0.7, 0.22, 0xb97d4e, { x: 0.4, y: 0.33, rz: -0.1 }),
+      box(0.4, 0.17, 0.24, 0xcf966a, { x: -0.2, y: 0.78, rz: 0.3 }), box(0.42, 0.17, 0.23, 0xc48a5a, { x: 0.2, y: 0.77, rz: -0.32 }), box(0.26, 0.15, 0.22, 0xd9a274, { y: 0.87 }),
+      ico(0.14, 0xb97d4e, { x: -0.55, y: 0.06, z: 0.2, sy: 0.7 }), ico(0.11, 0xcf966a, { x: 0.6, y: 0.05, z: -0.2, sy: 0.7 }), ico(0.09, 0xc48a5a, { x: 0.1, y: 0.04, z: 0.45, sy: 0.7 }),
+    ]),
     // --- 山
     peakA: peak(11, 0x7d746a, 0xa89e92, 0.5), peakB: peak(23, 0x766d64, 0x9f968b, 0.56),
     peakSnowA: peak(37, 0x8a8785, 0xb8babc, 0.22), peakSnowB: peak(41, 0x83817c, 0xafb2b4, 0.3),
@@ -243,6 +282,7 @@ export class Props {
         }
       };
 
+      if (t.wonder) { add('w_' + t.wonder, cx, cz, hash(i, 17) * 6.28, 1, 1, [1, 1, 1], 0.03); continue; }
       if (t.elev === 2) {
         const kind = t.terrain === 'desert' ? 'peakDry' : t.terrain === 'snow' || t.terrain === 'tundra' ? 'peakSnow' : 'peak';
         const v = () => kind + (hash(i, items.length) < 0.5 ? 'A' : 'B');

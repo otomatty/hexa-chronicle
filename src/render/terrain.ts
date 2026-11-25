@@ -120,6 +120,12 @@ export class Field {
       const ridge = 1 - Math.abs(2 * noise2(x * 1.3, z * 1.3, this.seed + 9) - 1);
       h += peak * (0.26 + 0.22 * ridge);
     }
+    // 崖：丘陵が海に面するところは、台地を岸の近くまで保ってから一気に落とす
+    if (hl > 0.12 && wat > 0.02 && wat < 0.6) {
+      const kk = Math.min(1, Math.max(0, (0.47 - wat) / 0.1));
+      const plateau = (0.4 + 0.14 * hl) * kk * kk * (3 - 2 * kk);
+      if (plateau > h) h = plateau;
+    }
     // 川：タイルの辺に沿って水面下まで溝を掘る（水面の平面がそのまま川になる）
     const rm = this.river[i];
     if (rm && h > RIVER_BED) {
@@ -225,14 +231,17 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
       cc.lerp(COL.deep, Math.min(1, -h / 0.45) * 0.85);
     }
     if (h >= 0) {
-      if (wat > 0.03 && h < 0.1) {
+      const slope = 1 - nrm.getY(v);
+      if (wat > 0.03 && h < 0.1 && slope < 0.1) {
         const k = Math.min(1, wat * 6) * (1 - h / 0.1);
         cc.lerp(COL.sand, k);
         mats[v * 4] *= 1 - k; mats[v * 4 + 1] += k * (1 - mats[v * 4 + 1]); mats[v * 4 + 2] *= 1 - k; mats[v * 4 + 3] *= 1 - k;
       }
-      const slope = 1 - nrm.getY(v);
-      if (h > 0.26 && mt < 0.02) {
-        const rk = Math.min(1, Math.max(0, (slope - 0.16) / 0.22));
+      // 急斜面と海沿いの崖は岩肌にする
+      const cliff = wat > 0.02 && h > 0.02 ? Math.min(1, Math.max(0, (slope - 0.08) / 0.14)) : 0;
+      const steep = h > 0.26 ? Math.min(1, Math.max(0, (slope - 0.16) / 0.22)) : 0;
+      const rk = mt < 0.02 ? Math.max(cliff, steep) : 0;
+      if (rk > 0) {
         cc.lerp(nz > 0.5 ? COL.rock : COL.rockDark, rk * 0.9);
         mats[v * 4] *= 1 - rk; mats[v * 4 + 1] *= 1 - rk; mats[v * 4 + 2] *= 1 - rk; mats[v * 4 + 3] += rk * (1 - mats[v * 4 + 3]);
       }

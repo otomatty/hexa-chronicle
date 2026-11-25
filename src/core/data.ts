@@ -43,6 +43,25 @@ export const RESOURCES: Record<string, ResourceDef> = {
   gems: { name: '宝石', kind: 'luxury', y: Y(0, 0, 3), improvement: 'mine', icon: '💎' },
 };
 
+// ---------------------------------------------------------------- 自然遺産（すべて本作オリジナル）
+export interface WonderDef {
+  name: string;
+  y: Yields;
+  desc: string;
+  /** 置かれやすい地形 */
+  prefer: string[];
+  /** 丘陵として扱うか */
+  hill: boolean;
+}
+export const WONDERS: Record<string, WonderDef> = {
+  spire: { name: '天の柱', y: Y(0, 0, 0, 1, 3), desc: '雲を突く岩の尖塔群', prefer: ['plains', 'grass', 'desert'], hill: true },
+  crater: { name: '竜の火口', y: Y(0, 3, 0, 1, 0), desc: '今も煙を上げる火口', prefer: ['plains', 'tundra', 'grass'], hill: true },
+  springs: { name: '虹の泉', y: Y(2, 0, 0, 2, 0), desc: '七色の段丘をなす温泉', prefer: ['tundra', 'plains', 'grass'], hill: false },
+  elder: { name: '千年樹', y: Y(2, 0, 0, 0, 2), desc: '森を見下ろす巨木', prefer: ['grass'], hill: false },
+  crystal: { name: '水晶の谷', y: Y(0, 0, 3, 1, 0), desc: '巨大な結晶が林立する谷', prefer: ['tundra', 'snow', 'plains'], hill: true },
+  arch: { name: '月の門', y: Y(0, 0, 2, 0, 2), desc: '風が削り出した岩の門', prefer: ['desert', 'plains'], hill: false },
+};
+
 // ---------------------------------------------------------------- 地形改良
 export interface ImprovementDef {
   name: string;
