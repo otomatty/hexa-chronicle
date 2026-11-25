@@ -1,7 +1,6 @@
 // ユニットと都市のプロシージャルモデル。外部アセットを使わず、プリミティブの組み合わせで作る。
 import * as THREE from 'three';
 import { ball, box, cone, cyl, group, hash, merge, ring } from './geo';
-import type { Field } from './terrain';
 
 type Geo = THREE.BufferGeometry;
 const SKIN = 0xe0b48c, WOOD = 0x6b4a2c, DARK = 0x2a2622, STEEL = 0xb8bcc4, IRON = 0x55585e, LEATHER = 0x7a5a36;
@@ -10,22 +9,29 @@ interface Fig { tunic: number; legs?: number; hat?: 'helmet' | 'cap' | 'tricorn'
 
 /** 人型フィギュア（+z 向き） */
 function figure(f: Fig): Geo[] {
+  const legs = f.legs ?? DARK;
   const p: Geo[] = [
-    box(0.05, 0.15, 0.06, f.legs ?? DARK, { x: -0.035, y: 0.075 }),
-    box(0.05, 0.15, 0.06, f.legs ?? DARK, { x: 0.035, y: 0.075 }),
-    box(0.15, 0.17, 0.09, f.tunic, { y: 0.235 }),
-    box(0.04, 0.14, 0.05, f.tunic, { x: -0.095, y: 0.24 }),
-    box(0.04, 0.14, 0.05, f.tunic, { x: 0.095, y: 0.24 }),
-    ball(0.058, SKIN, { y: 0.375 }),
+    cyl(0.03, 0.025, 0.15, 6, legs, { x: -0.037, y: 0.085 }),
+    cyl(0.03, 0.025, 0.15, 6, legs, { x: 0.037, y: 0.085 }),
+    box(0.05, 0.028, 0.08, DARK, { x: -0.037, y: 0.014, z: 0.012 }),
+    box(0.05, 0.028, 0.08, DARK, { x: 0.037, y: 0.014, z: 0.012 }),
+    cyl(0.072, 0.096, 0.09, 7, f.tunic, { y: 0.175 }),
+    cyl(0.088, 0.07, 0.14, 7, f.tunic, { y: 0.285 }),
+    cyl(0.076, 0.076, 0.022, 7, LEATHER, { y: 0.212 }),
+    cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: -0.108, y: 0.27, rz: -0.2 }),
+    cyl(0.024, 0.02, 0.15, 5, f.tunic, { x: 0.108, y: 0.27, rz: 0.2 }),
+    ball(0.024, SKIN, { x: -0.124, y: 0.19 }, 5, 4),
+    ball(0.024, SKIN, { x: 0.124, y: 0.19 }, 5, 4),
+    ball(0.06, SKIN, { y: 0.4 }, 8, 6),
   ];
   const hc = f.hatColor ?? STEEL;
   if (f.hat === 'helmet' || f.hat === 'steel') {
-    p.push(ball(0.064, hc, { y: 0.392, sy: 0.75 }));
-    if (f.hat === 'steel') p.push(cyl(0.085, 0.085, 0.012, 8, hc, { y: 0.385 }));
-  } else if (f.hat === 'cap') p.push(cyl(0.05, 0.06, 0.04, 6, hc, { y: 0.425 }));
-  else if (f.hat === 'tricorn') { p.push(cyl(0.095, 0.095, 0.014, 3, hc, { y: 0.42 })); p.push(cyl(0.045, 0.05, 0.04, 6, hc, { y: 0.44 })); }
-  else if (f.hat === 'hood') p.push(cone(0.07, 0.1, 6, hc, { y: 0.44 }));
-  else if (f.hat === 'feather') { p.push(cyl(0.06, 0.06, 0.02, 8, hc, { y: 0.42 })); p.push(cone(0.02, 0.12, 4, 0xd9432b, { y: 0.49, z: -0.03, rx: -0.3 })); }
+    p.push(ball(0.066, hc, { y: 0.418, sy: 0.72 }, 8, 5));
+    if (f.hat === 'steel') p.push(cyl(0.088, 0.088, 0.012, 8, hc, { y: 0.41 }));
+  } else if (f.hat === 'cap') p.push(cyl(0.05, 0.062, 0.045, 7, hc, { y: 0.45 }));
+  else if (f.hat === 'tricorn') { p.push(cyl(0.1, 0.1, 0.014, 3, hc, { y: 0.445 })); p.push(cyl(0.045, 0.052, 0.045, 6, hc, { y: 0.47 })); }
+  else if (f.hat === 'hood') { p.push(cone(0.072, 0.11, 7, hc, { y: 0.47 })); p.push(cyl(0.09, 0.1, 0.05, 7, hc, { y: 0.335 })); }
+  else if (f.hat === 'feather') { p.push(cyl(0.064, 0.064, 0.022, 8, hc, { y: 0.45 })); p.push(cone(0.02, 0.12, 4, 0xd9432b, { y: 0.52, z: -0.03, rx: -0.3 })); }
   switch (f.weapon) {
     case 'club': p.push(cyl(0.028, 0.014, 0.24, 5, WOOD, { x: 0.12, y: 0.32, rx: 0.5 })); break;
     case 'axe': p.push(cyl(0.012, 0.012, 0.26, 4, WOOD, { x: 0.12, y: 0.32, rx: 0.4 })); p.push(box(0.02, 0.07, 0.08, STEEL, { x: 0.12, y: 0.43, z: 0.07 })); break;
@@ -196,25 +202,38 @@ function house(w: number, h: number, d: number, wall: number, roof: number, x: n
 
 export interface CityLook { pop: number; era: number; walls: boolean; capital: boolean; c1: number; c2: number; seed: number }
 
-export function cityGeometry(look: CityLook, field: Field, cx: number, cz: number): Geo {
+export function cityGeometry(look: CityLook): Geo {
   const p: Geo[] = [];
-  const base = field.ground(cx, cz);
-  const gy = (x: number, z: number) => field.ground(cx + x, cz + z) - base;
+  // 都市は石畳の台地の上に建てる（斜面でも建物が埋もれない）
+  const TOP = 0.05;
+  const gy = (_x: number, _z: number) => TOP;
   const { era, c1, c2, seed } = look;
+  const pave = era >= 4 ? 0x8d8a86 : era >= 2 ? 0xa99d88 : 0xb3a383;
+  p.push(cyl(0.8, 0.86, 0.5, 6, pave, { y: TOP - 0.25, ry: Math.PI / 6 }));
+  p.push(cyl(0.805, 0.805, 0.03, 6, era >= 4 ? 0x6f6c68 : 0x8a7d66, { y: TOP - 0.03, ry: Math.PI / 6 }));
+  for (let k = 0; k < 3; k++) p.push(box(1.36, 0.012, 0.06, era >= 4 ? 0x5f5d5a : 0x8f8168, { y: TOP + 0.004, ry: (Math.PI / 3) * k + Math.PI / 6 }));
+  const lift: Geo[] = [];
   const wallCol = era >= 4 ? 0xb9a089 : era >= 2 ? 0xd9cfb8 : 0xcdb891;
   const roofs = [c1, 0x9a4a32, 0x7a5a3a, c2];
   // 中心の建物
   if (era >= 5) {
-    p.push(box(0.22, 0.6, 0.22, 0x8fa3b5, { y: 0.3 }), box(0.18, 0.2, 0.18, 0xa9bccd, { y: 0.7 }), cyl(0.01, 0.01, 0.2, 4, DARK, { y: 0.9 }));
-    p.push(box(0.16, 0.42, 0.16, 0x9aa9b8, { x: 0.24, y: 0.21, z: 0.1 }), box(0.14, 0.34, 0.2, 0x7f93a6, { x: -0.22, y: 0.17, z: -0.14 }));
+    lift.push(box(0.22, 0.6, 0.22, 0x8fa3b5, { y: 0.3 }), box(0.18, 0.2, 0.18, 0xa9bccd, { y: 0.7 }), cyl(0.01, 0.01, 0.2, 4, DARK, { y: 0.9 }));
+    lift.push(box(0.16, 0.42, 0.16, 0x9aa9b8, { x: 0.24, y: 0.21, z: 0.1 }), box(0.14, 0.34, 0.2, 0x7f93a6, { x: -0.22, y: 0.17, z: -0.14 }));
   } else if (look.capital || look.pop >= 6) {
-    p.push(box(0.3, 0.26, 0.26, wallCol, { y: 0.13 }), cone(0.24, 0.16, 4, c1, { y: 0.34, ry: Math.PI / 4 }));
-    p.push(cyl(0.06, 0.07, 0.42, 6, wallCol, { x: 0.17, y: 0.21, z: 0.14 }), cone(0.085, 0.14, 6, c1, { x: 0.17, y: 0.49, z: 0.14 }));
-    p.push(cyl(0.06, 0.07, 0.36, 6, wallCol, { x: -0.17, y: 0.18, z: -0.12 }), cone(0.085, 0.12, 6, c1, { x: -0.17, y: 0.42, z: -0.12 }));
+    lift.push(box(0.3, 0.26, 0.26, wallCol, { y: 0.13 }), cone(0.24, 0.16, 4, c1, { y: 0.34, ry: Math.PI / 4 }));
+    lift.push(cyl(0.06, 0.07, 0.42, 6, wallCol, { x: 0.17, y: 0.21, z: 0.14 }), cone(0.085, 0.14, 6, c1, { x: 0.17, y: 0.49, z: 0.14 }));
+    lift.push(cyl(0.06, 0.07, 0.36, 6, wallCol, { x: -0.17, y: 0.18, z: -0.12 }), cone(0.085, 0.12, 6, c1, { x: -0.17, y: 0.42, z: -0.12 }));
   } else {
-    p.push(...house(0.2, 0.16, 0.16, wallCol, c1, 0, 0, 0, 0.3));
+    lift.push(...house(0.2, 0.16, 0.16, wallCol, c1, 0, 0, 0, 0.3));
   }
-  p.push(cyl(0.008, 0.008, 0.34, 4, DARK, { y: era >= 5 ? 1.0 : 0.6 }), box(0.14, 0.08, 0.01, c1, { x: 0.07, y: era >= 5 ? 1.12 : 0.72 }), box(0.14, 0.02, 0.012, c2, { x: 0.07, y: era >= 5 ? 1.12 : 0.72 }));
+  lift.push(cyl(0.008, 0.008, 0.34, 4, DARK, { y: era >= 5 ? 1.0 : 0.6 }), box(0.14, 0.08, 0.01, c1, { x: 0.07, y: era >= 5 ? 1.12 : 0.72 }), box(0.14, 0.02, 0.012, c2, { x: 0.07, y: era >= 5 ? 1.12 : 0.72 }));
+  if (era < 5 && era >= 2 && (look.capital || look.pop >= 6)) lift.push(ball(0.085, c2, { y: 0.47, sy: 0.9 }), cyl(0.006, 0.006, 0.1, 4, 0xe2c36b, { y: 0.58 }));
+  if (era >= 3 && era < 5 && look.pop >= 8) lift.push(box(0.1, 0.34, 0.14, 0xcfc6b4, { x: -0.3, y: 0.17, z: 0.22 }), cone(0.06, 0.26, 4, 0x4a5568, { x: -0.3, y: 0.47, z: 0.22, ry: Math.PI / 4 }));
+  if (look.pop >= 4) for (let k = 0; k < 3; k++) {
+    const a = 2.2 + k * 0.5;
+    lift.push(box(0.07, 0.05, 0.06, 0x8b6a42, { x: Math.cos(a) * 0.2, y: 0.025, z: Math.sin(a) * 0.2 }), box(0.09, 0.012, 0.08, k % 2 ? c2 : c1, { x: Math.cos(a) * 0.2, y: 0.07, z: Math.sin(a) * 0.2, rz: 0.15 }));
+  }
+  p.push(...group(lift, { y: TOP }));
   // 周囲の家
   const count = Math.min(30, 4 + look.pop * 2);
   for (let k = 0; k < count; k++) {
@@ -237,7 +256,7 @@ export function cityGeometry(look: CityLook, field: Field, cx: number, cz: numbe
       const a0 = (Math.PI / 3) * k + Math.PI / 6, a1 = a0 + Math.PI / 3;
       const x0 = Math.cos(a0) * R, z0 = Math.sin(a0) * R, x1 = Math.cos(a1) * R, z1 = Math.sin(a1) * R;
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-      const y = Math.min(gy(x0, z0), gy(x1, z1), gy(mx, mz));
+      const y = TOP;
       if (k !== 1) p.push(box(R * 0.98, 0.14, 0.05, stone, { x: mx, y: y + 0.07, z: mz, ry: -Math.atan2(z1 - z0, x1 - x0) }));
       p.push(cyl(0.055, 0.065, 0.22, 6, stone, { x: x0, y: gy(x0, z0) + 0.11, z: z0 }), cone(0.07, 0.08, 6, c1, { x: x0, y: gy(x0, z0) + 0.26, z: z0 }));
     }

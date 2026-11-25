@@ -6,7 +6,7 @@ import { HEX, SQ3, worldToTile } from '../core/hex';
 import type { GameEvent, GameState } from '../core/types';
 import { cityGeometry, unitGeometry } from './models';
 import { Props } from './props';
-import { createMapTextures, patchMaterial, type MapTextures } from './shaders';
+import { createMapTextures, PARCHMENT, patchMaterial, type MapTextures } from './shaders';
 import { buildTerrain, buildWater, Field } from './terrain';
 
 export type Quality = 'low' | 'medium' | 'high';
@@ -26,6 +26,7 @@ interface UnitView {
   queue: THREE.Vector3[];
   seg: number;
   lunge: { dx: number; dz: number; t: number } | null;
+  phase: number;
   dying: number;
   tile: number;
 }
@@ -86,7 +87,7 @@ export class GameView {
     this.renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.shadowMap.enabled = q.shadow > 0;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     host.appendChild(this.renderer.domElement);
@@ -94,22 +95,32 @@ export class GameView {
     this.labels.className = 'labels';
     host.appendChild(this.labels);
 
-    this.scene.background = new THREE.Color(0x0a0e17);
-    this.scene.fog = new THREE.Fog(0x0a0e17, 70, 170);
+    this.scene.background = new THREE.Color(PARCHMENT);
+    this.scene.fog = new THREE.Fog(0xc9c2ad, 90, 260);
     this.camera = new THREE.PerspectiveCamera(34, 1, 0.5, 400);
 
-    this.scene.add(new THREE.HemisphereLight(0xd6e8ff, 0x6a5a40, 1.15));
-    this.sun = new THREE.DirectionalLight(0xfff0d8, 2.5);
+    this.scene.add(new THREE.HemisphereLight(0xd8e8ff, 0x8f7f60, 1.55));
+    // 影側が潰れないよう、太陽の反対側から弱い補助光を当てる
+    const fill = new THREE.DirectionalLight(0xbfd4ff, 0.55);
+    fill.position.set(0.6, 0.5, 0.7);
+    this.scene.add(fill);
+    this.sun = new THREE.DirectionalLight(0xffecd0, 2.5);
     if (q.shadow > 0) {
       this.sun.castShadow = true;
       this.sun.shadow.mapSize.set(q.shadow, q.shadow);
       this.sun.shadow.bias = -0.0006;
       this.sun.shadow.normalBias = 0.03;
+      this.sun.shadow.radius = 2.5;
     }
     this.scene.add(this.sun, this.sun.target);
 
     this.tex = createMapTextures(s.w, s.h);
-    s.players.forEach((p, i) => { if (i < 9) this.tex.uniforms.uPC.value[i].set(p.color); });
+    s.players.forEach((p, i) => {
+      if (i >= 9) return;
+      this.tex.uniforms.uPC.value[i].set(p.color);
+      this.tex.uniforms.uPC2.value[i].set(p.color2);
+    });
+    patchMaterial(this.unitMat, this.tex.uniforms, false);
     for (let i = 0; i < s.tiles.length; i++) {
       const t = s.tiles[i];
       const water = t.terrain === 'ocean' || t.terrain === 'coast';
@@ -117,9 +128,9 @@ export class GameView {
       this.tex.vis[i * 4 + 3] = t.terrain === 'coast' ? 255 : 0;
     }
     this.field = new Field(s);
-    this.scene.add(buildTerrain(s, this.field, this.tex.uniforms, q.subdiv));
+    this.scene.add(buildTerrain(s, this.field, this.tex.uniforms, q.subdiv, quality !== 'low'));
     this.scene.add(buildWater(s, this.tex.uniforms, this.sunDir));
-    this.props = new Props(this.field, this.tex.uniforms);
+    this.props = new Props(this.field, this.tex.uniforms, quality !== 'low');
     this.scene.add(this.props.root);
     this.cityMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), this.tex.uniforms, false);
 
@@ -347,7 +358,7 @@ export class GameView {
         cv.mesh.geometry = cityGeometry({
           pop: c.pop, era: eraOf(p), walls: c.buildings.includes('walls'), capital: c.capital,
           c1: colorNum(p.color), c2: colorNum(p.color2), seed: c.id,
-        }, this.field, this.field.tx(c.pos), this.field.tz(c.pos));
+        });
       }
       const info = this.cb.cityLabel(c.id);
       const labelSig = [c.owner, c.pop, c.hp, info.text, info.sub].join('|');
@@ -383,7 +394,7 @@ export class GameView {
     flag.innerHTML = `<span>${UNITS[u.type].icon}</span><i><u></u></i>`;
     flag.addEventListener('click', (e) => { e.stopPropagation(); this.cb.onUnitClick(id); });
     this.labels.appendChild(flag);
-    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, dying: 0, tile: at };
+    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, phase: id * 1.7, dying: 0, tile: at };
     this.units.set(id, uv);
     return uv;
   }
@@ -532,9 +543,13 @@ export class GameView {
         uv.dying += dt * 3.2;
         m.scale.setScalar(Math.max(0.01, 1 - uv.dying) * UNIT_SCALE);
         m.position.y -= dt * 0.25;
+        m.rotation.z += dt * 2.2;
         if (uv.dying >= 1) this.dropUnit(id);
         continue;
       }
+      // 歩行中は左右に揺らし、待機中はわずかに呼吸させる
+      if (uv.queue.length) { uv.phase += dt * 15; m.rotation.z = Math.sin(uv.phase) * 0.07; m.rotation.x = 0.06; }
+      else { m.rotation.z *= 0.8; m.rotation.x *= 0.8; m.scale.y = UNIT_SCALE * (1 + Math.sin(time * 2.1 + uv.phase) * 0.014); }
       if (uv.queue.length) {
         let step = dt * Math.max(7, uv.queue.length * 3.5);
         while (step > 0 && uv.queue.length) {

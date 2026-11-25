@@ -57,3 +57,7 @@ export function hash(i: number, k: number): number {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+
+/** 面のはっきりした岩や樹冠向けの二十面体 */
+export const ico = (r: number, color: THREE.ColorRepresentation, t: Xf = {}, detail = 0) =>
+  xf(paint(new THREE.IcosahedronGeometry(r, detail), color), t);

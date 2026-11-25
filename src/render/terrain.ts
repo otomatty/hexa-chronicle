@@ -13,7 +13,7 @@ const COL = {
 };
 
 function tileColor(t: Tile): THREE.Color {
-  if (t.elev === 2) return COL.rock.clone();
+  if (t.elev === 2) return t.terrain === 'desert' ? C(0xa9825c) : t.terrain === 'snow' ? C(0xc4c8cb) : COL.rock.clone();
   const c = COL[t.terrain].clone();
   if (t.feature === 'forest') c.lerp(t.terrain === 'tundra' ? C(0x4e6b4a) : COL.forest, 0.7);
   else if (t.feature === 'jungle') c.lerp(COL.jungle, 0.8);
@@ -53,7 +53,7 @@ export class Field {
       let base = 0.14, amp = 0.035;
       if (t.terrain === 'ocean') { base = -0.5; amp = 0.05; this.water[i] = 1; }
       else if (t.terrain === 'coast') { base = -0.15; amp = 0.025; this.water[i] = 1; }
-      else if (t.elev === 2) { base = 0.55; amp = 0.14; this.mtn[i] = 0.75 + hash(i, 3) * 0.55; }
+      else if (t.elev === 2) { base = 0.42; amp = 0.12; this.mtn[i] = 0.75 + hash(i, 3) * 0.55; }
       else if (t.elev === 1) { base = 0.33; amp = 0.1; this.hill[i] = 1; }
       else if (t.feature === 'marsh') { base = 0.07; amp = 0.015; }
       else if (t.terrain === 'desert') amp = 0.06;
@@ -61,12 +61,6 @@ export class Field {
       const c = tileColor(t);
       this.col[i * 3] = c.r; this.col[i * 3 + 1] = c.g; this.col[i * 3 + 2] = c.b;
     }
-  }
-
-  /** 都市タイルは建物が沈まないよう起伏を抑える */
-  flatten(i: number): void {
-    this.amp[i] = 0.01;
-    this.hill[i] *= 0.3;
   }
 
   sample(x: number, z: number): number {
@@ -95,7 +89,7 @@ export class Field {
     if (hl > 0.01) h += hl * (fbm(x * 0.9 + 7, z * 0.9 + 7, this.seed + 5, 2) - 0.4) * 0.34;
     if (peak > 0) {
       const ridge = 1 - Math.abs(2 * noise2(x * 1.3, z * 1.3, this.seed + 9) - 1);
-      h += peak * (0.7 + 0.5 * ridge);
+      h += peak * (0.26 + 0.22 * ridge);
     }
     this.sh = h; this.sr = r / swc; this.sg = g / swc; this.sb = b / swc; this.swat = wat; this.smt = peak;
     return h;
@@ -113,7 +107,7 @@ export class Field {
 // 六角形の頂点（三角格子上の整数オフセット）
 const CORNERS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
 
-export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, subdiv: number): THREE.Mesh {
+export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, subdiv: number, detail: boolean): THREE.Mesh {
   const N = subdiv;
   const n = s.w * s.h;
   const OFF = 4096, K = 16384;
@@ -173,20 +167,15 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
     } else {
       if (wat > 0.03 && h < 0.1) cc.lerp(COL.sand, Math.min(1, wat * 6) * (1 - h / 0.1));
       const slope = 1 - nrm.getY(v);
-      if (h > 0.26) {
+      if (h > 0.26 && mt < 0.02) {
         const rk = Math.min(1, Math.max(0, (slope - 0.16) / 0.22));
         cc.lerp(nz > 0.5 ? COL.rock : COL.rockDark, rk * 0.9);
-      }
-      if (mt > 0.02) {
-        cc.lerp(nz > 0.45 ? COL.rock : COL.rockDark, Math.min(1, mt * 3));
-        const snowLine = 1.02 + nz * 0.22;
-        if (h > snowLine) cc.lerp(COL.snow, Math.min(1, (h - snowLine) / 0.12) * (slope < 0.62 ? 1 : 0.5));
       }
     }
     col[v * 3] = cc.r; col[v * 3 + 1] = cc.g; col[v * 3 + 2] = cc.b;
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), uniforms, true);
+  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), uniforms, true, detail);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.castShadow = true;

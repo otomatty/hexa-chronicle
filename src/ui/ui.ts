@@ -510,7 +510,7 @@ export class Hud {
     const kinds = { domination: '制覇勝利', science: '科学勝利', score: 'スコア勝利' };
     const win = w && w.player === this.api.human;
     const title = win ? `🏆 ${kinds[w!.kind]}` : defeated && !w ? '文明は滅亡した…' : '敗北';
-    let h = `<p style="font:16px var(--serif);margin:0 0 12px">${w ? `${s.players[w.player].name} が${kinds[w.kind]}を達成しました。` : 'あなたの文明は歴史から姿を消しました。'}</p>`;
+    let h = `<p style="font:16px var(--display);margin:0 0 12px">${w ? `${s.players[w.player].name} が${kinds[w.kind]}を達成しました。` : 'あなたの文明は歴史から姿を消しました。'}</p>`;
     for (const o of majors(s).sort((a, b) => b.score - a.score)) {
       h += `<div class="civrow"><div class="dot" style="--c:${o.color};--c2:${o.color2}"></div><div class="nm"><b>${o.name}</b><small>都市${citiesOf(s, o.id).length}・技術${o.techs.length}</small></div><span class="tag">${o.score} 点</span></div>`;
     }
