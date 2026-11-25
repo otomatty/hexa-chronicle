@@ -110,6 +110,10 @@ export function tileYield(s: GameState, i: number): Yields {
     add(d.y);
     if (d.boostTech && d.boost && owner && hasTech(owner, d.boostTech)) add(d.boost);
   }
+  if (t.river && !isWater(t)) {
+    y.gold += 1;
+    if (t.improvement === 'farm') y.food += 1;
+  }
   if (owner && t.terrain === 'coast') {
     if (owner.civ === 'mizuho') y.food += 1;
     const c = s.cities[t.cityId];
@@ -484,9 +488,20 @@ export function moveCost(s: GameState, u: Unit, to: number): number {
   return 1 + (t.elev === 1 ? 1 : 0) + (t.feature ? 1 : 0);
 }
 
-/** 乗船・上陸（残り移動力をすべて消費する） */
+/** 2 つの隣接タイルの境界に川があるか */
+export function riverBetween(s: GameState, a: number, b: number): boolean {
+  const m = s.tiles[a].river;
+  if (!m) return false;
+  const nb = rt(s).nb;
+  for (let d = 0; d < 6; d++) if (m & (1 << d) && nb[a * 6 + d] === b) return true;
+  return false;
+}
+
+/** 乗船・上陸・渡河（残り移動力をすべて消費する）。「建築学」を得ると橋で渡河の制約がなくなる */
 function isTransition(s: GameState, u: Unit, from: number, to: number): boolean {
-  return !UNITS[u.type].sea && isWater(s.tiles[from]) !== isWater(s.tiles[to]);
+  if (UNITS[u.type].sea) return false;
+  if (isWater(s.tiles[from]) !== isWater(s.tiles[to])) return true;
+  return riverBetween(s, from, to) && !hasTech(s.players[u.owner], 'construction');
 }
 
 /** 0: 進入可, 1: 通過のみ可（味方がいる）, 2: 進入不可。knownOnly なら視界外のユニットは見えないものとして扱う */
@@ -819,7 +834,7 @@ function doAttack(s: GameState, a: Unit, target: number): ActionResult {
 
   if (city) {
     const cs = cityStrength(s, city);
-    const as = unitStrength(s, a, { attack: true, ranged, vsCity: true });
+    const as = unitStrength(s, a, { attack: true, ranged, vsCity: true }) - (!ranged && riverBetween(s, from, target) ? 5 : 0);
     dmgDef = damage(s, as - cs);
     if (city.buildings.includes('walls') && ad.cls !== 'siege') dmgDef = Math.ceil(dmgDef * 0.6);
     if (!ranged) dmgAtk = damage(s, cs - unitStrength(s, a, { attack: false, ranged: false }));
@@ -848,7 +863,7 @@ function doAttack(s: GameState, a: Unit, target: number): ActionResult {
   }
 
   const d = milAt(s, target)!;
-  const as = unitStrength(s, a, { attack: true, ranged, vs: d });
+  const as = unitStrength(s, a, { attack: true, ranged, vs: d }) - (!ranged && riverBetween(s, from, target) ? 5 : 0);
   const ds = unitStrength(s, d, { attack: false, ranged: false, vs: a });
   dmgDef = damage(s, as - ds);
   if (!ranged) dmgAtk = damage(s, ds - as);
@@ -1275,15 +1290,15 @@ export function createGame(o: NewGameOptions): GameState {
 export function serialize(s: GameState): string {
   const { events, tiles, vis, ...rest } = s;
   void events;
-  const packed = tiles.map((t) => [t.terrain, t.elev, t.feature, t.resource, t.improvement, t.owner, t.cityId, t.camp ? 1 : 0]);
+  const packed = tiles.map((t) => [t.terrain, t.elev, t.feature, t.resource, t.improvement, t.owner, t.cityId, t.camp ? 1 : 0, t.river]);
   return JSON.stringify({ ...rest, tiles: packed, vis: vis.map((v) => v.join('')) });
 }
 
 export function deserialize(json: string): GameState {
   const o = JSON.parse(json);
   if (o.version !== SAVE_VERSION) throw new Error('セーブデータのバージョンが異なります');
-  o.tiles = o.tiles.map((t: [Tile['terrain'], number, Tile['feature'], string, string, number, number, number]) => ({
-    terrain: t[0], elev: t[1], feature: t[2], resource: t[3], improvement: t[4], owner: t[5], cityId: t[6], camp: !!t[7],
+  o.tiles = o.tiles.map((t: [Tile['terrain'], number, Tile['feature'], string, string, number, number, number, number?]) => ({
+    terrain: t[0], elev: t[1], feature: t[2], resource: t[3], improvement: t[4], owner: t[5], cityId: t[6], camp: !!t[7], river: t[8] ?? 0,
   }));
   o.vis = o.vis.map((v: string) => Array.from(v, Number));
   o.events = [];

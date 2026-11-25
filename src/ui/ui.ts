@@ -72,6 +72,7 @@ function unlocks(tech: string): string[] {
   if (tech === 'sailing') out.push('沿岸への乗船');
   if (tech === 'cartography') out.push('外洋航行');
   if (tech === 'mining') out.push('地物の除去');
+  if (tech === 'construction') out.push('橋（渡河の制約なし）');
   if (tech === 'spaceflight') out.push('宇宙開発計画');
   return out;
 }
@@ -390,6 +391,7 @@ export class Hud {
     if (t.elev !== 2) h += `<div>${yieldStr(tileYield(s, i))}</div>`;
     if (t.resource) h += `<div>${RESOURCES[t.resource].icon} ${RESOURCES[t.resource].name}</div>`;
     if (t.improvement) h += `<div>🔧 ${IMPROVEMENTS[t.improvement].name}</div>`;
+    if (t.river && t.elev !== 2) h += '<div>🏞️ 川沿い（💰+1、農場の🌾+1）</div>';
     if (t.camp) h += '<div class="warn">⚠ 蛮族の野営地</div>';
     if (t.owner >= 0) {
       const c = s.cities[t.cityId];

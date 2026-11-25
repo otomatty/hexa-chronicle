@@ -263,3 +263,89 @@ export function cityGeometry(look: CityLook): Geo {
   }
   return merge(p);
 }
+
+// ---------------------------------------------------------------- 区域（都市の周囲に広がる専門地区）
+export type DistrictKind = 'campus' | 'commerce' | 'industry' | 'culture' | 'harbor';
+
+/** 柱の並ぶ建物（銀行・博物館など） */
+function colonnade(w: number, d: number, h: number, wall: number, roof: number, t: { x: number; z: number; ry: number }): Geo[] {
+  const p = [box(w, h, d, wall, { y: h / 2 + 0.02 }), box(w + 0.05, 0.02, d + 0.05, 0xd9d2c0, { y: 0.01 }), box(w + 0.04, 0.03, d + 0.04, roof, { y: h + 0.035 })];
+  p.push(cyl(Math.max(w, d) * 0.62, Math.max(w, d) * 0.62, 0.012, 3, roof, { y: h + 0.06, sx: 1, sz: d / w }));
+  const n = 4;
+  for (let i = 0; i < n; i++) p.push(cyl(0.012, 0.014, h, 6, 0xeee8d8, { x: -w / 2 + (w / (n - 1)) * i, y: h / 2 + 0.02, z: d / 2 + 0.02 }));
+  return group(p, { x: t.x, z: t.z, ry: t.ry });
+}
+
+/**
+ * 区域のモデル。level は該当する建造物の数（多いほど建物が増える）。
+ * 戻り値の smoke は煙突の位置（モデル座標）。
+ */
+export function districtGeometry(kind: DistrictKind, level: number, era: number, c1: number, c2: number): { geo: Geo; smoke: [number, number, number][] } {
+  const p: Geo[] = [];
+  const smoke: [number, number, number][] = [];
+  const T = 0.04;
+  if (kind !== 'harbor') {
+    const pave = kind === 'industry' ? 0x8a8580 : era >= 4 ? 0x9c968a : 0xa89c80;
+    p.push(cyl(0.6, 0.66, 0.4, 6, pave, { y: T - 0.2, ry: Math.PI / 6 }));
+    p.push(cyl(0.605, 0.605, 0.03, 6, kind === 'industry' ? 0x6a6660 : 0x857a64, { y: T - 0.03, ry: Math.PI / 6 }));
+    p.push(cyl(0.2, 0.2, 0.012, 10, kind === 'commerce' ? 0xcdbf9a : 0x9f9480, { y: T + 0.004 }));
+  }
+  const wall = era >= 4 ? 0xc9c2b6 : 0xddd3bc;
+  if (kind === 'campus') {
+    const blue = 0x3f6fb5;
+    p.push(...group(house(0.26, 0.15, 0.17, wall, blue, 0, 0, 0, 0), { x: -0.32, y: T, z: -0.22, ry: 0.5 }));
+    p.push(cyl(0.05, 0.055, 0.3, 7, wall, { x: -0.44, y: T + 0.15, z: 0.12 }), cone(0.07, 0.12, 7, blue, { x: -0.44, y: T + 0.36, z: 0.12 }));
+    if (level >= 2) {
+      p.push(...group(house(0.22, 0.17, 0.2, wall, blue, 0, 0, 0, 0), { x: 0.34, y: T, z: -0.24, ry: -0.5 }));
+      p.push(cyl(0.085, 0.09, 0.12, 10, wall, { x: 0.38, y: T + 0.06, z: 0.2 }), ball(0.085, 0xe9edf2, { x: 0.38, y: T + 0.12, z: 0.2, sy: 0.8 }, 10, 6), box(0.02, 0.02, 0.1, 0x3a3f4a, { x: 0.38, y: T + 0.2, z: 0.23, rx: -0.6 }));
+    }
+    if (level >= 3) p.push(box(0.2, 0.26, 0.16, 0xa9c4dc, { x: 0.02, y: T + 0.13, z: -0.44 }), box(0.21, 0.02, 0.17, 0x6f8fae, { x: 0.02, y: T + 0.27, z: -0.44 }));
+    if (level >= 4) p.push(cyl(0.05, 0.065, 0.5, 8, 0xb8cfe2, { x: -0.05, y: T + 0.25, z: 0.44 }), cyl(0.004, 0.004, 0.2, 4, 0x3a3f4a, { x: -0.05, y: T + 0.6, z: 0.44 }), ball(0.03, 0xd9432b, { x: -0.05, y: T + 0.7, z: 0.44 }, 5, 4));
+    p.push(cyl(0.01, 0.01, 0.2, 4, 0x3a3f4a, { x: 0.22, y: T + 0.1, z: 0.44 }), box(0.1, 0.06, 0.01, blue, { x: 0.27, y: T + 0.17, z: 0.44 }));
+  } else if (kind === 'commerce') {
+    const awn = [c1, c2, 0xd9a441, 0xf1ead8, 0x3f8f6a];
+    const n = 4 + Math.min(2, level);
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + 0.3, r = 0.4;
+      p.push(...group([box(0.13, 0.07, 0.1, 0x8b6a42, { y: 0.035 }), box(0.16, 0.012, 0.14, awn[k % awn.length], { y: 0.11, rx: 0.25 }),
+        cyl(0.006, 0.006, 0.11, 4, 0x5b4025, { x: -0.07, y: 0.055, z: 0.06 }), cyl(0.006, 0.006, 0.11, 4, 0x5b4025, { x: 0.07, y: 0.055, z: 0.06 })], { x: Math.cos(a) * r, y: T, z: Math.sin(a) * r, ry: -a + Math.PI / 2 }));
+    }
+    p.push(cyl(0.05, 0.06, 0.04, 8, 0x9a958c, { y: T + 0.02 }), cyl(0.012, 0.012, 0.12, 5, 0x9a958c, { y: T + 0.08 }));
+    if (level >= 2) p.push(...group(colonnade(0.26, 0.16, 0.16, wall, 0xd9a441, { x: 0, z: 0, ry: 0 }), { x: -0.02, y: T, z: -0.47 }));
+  } else if (kind === 'industry') {
+    p.push(...group(house(0.3, 0.14, 0.2, 0x9a7a5a, 0x5a4638, 0, 0, 0, 0), { x: -0.3, y: T, z: -0.24, ry: 0.4 }));
+    p.push(box(0.1, 0.05, 0.1, 0x4a4038, { x: -0.38, y: T + 0.025, z: 0.2 }), box(0.14, 0.04, 0.08, 0x8b6a42, { x: -0.2, y: T + 0.02, z: 0.36, ry: 0.4 }));
+    if (level >= 2) {
+      p.push(box(0.34, 0.2, 0.22, 0x9a5a48, { x: 0.3, y: T + 0.1, z: -0.24 }));
+      for (let k = 0; k < 3; k++) p.push(box(0.1, 0.05, 0.225, 0x6a4a40, { x: 0.19 + k * 0.11, y: T + 0.215, z: -0.24, rz: 0.5 }));
+      for (const [x, z, hh] of [[0.2, -0.05, 0.46], [0.36, -0.03, 0.38]] as const) {
+        p.push(cyl(0.028, 0.04, hh, 8, 0x7a4a3c, { x, y: T + hh / 2, z }), cyl(0.032, 0.032, 0.02, 8, 0x3a3432, { x, y: T + hh, z }));
+        smoke.push([x, T + hh + 0.05, z]);
+      }
+    } else smoke.push([-0.3, T + 0.3, -0.24]);
+    if (level >= 3) {
+      p.push(cyl(0.085, 0.13, 0.3, 10, 0xc4c6c8, { x: 0.3, y: T + 0.15, z: 0.34 }), cyl(0.07, 0.085, 0.06, 10, 0xb0b3b6, { x: 0.3, y: T + 0.33, z: 0.34 }));
+      smoke.push([0.3, T + 0.42, 0.34]);
+    }
+  } else if (kind === 'culture') {
+    const purple = 0x7a4a9a;
+    for (let k = 0; k < 3; k++) {
+      const g = new THREE.CylinderGeometry(0.2 + k * 0.07, 0.2 + k * 0.07, 0.04 + k * 0.035, 12, 1, false, 0, Math.PI);
+      p.push(group([paintGeo(g, 0xd9d2c0)], { x: -0.28, y: T + (0.04 + k * 0.035) / 2, z: 0.18, ry: 0.6 })[0]);
+    }
+    p.push(box(0.2, 0.012, 0.1, 0xb59a6a, { x: -0.2, y: T + 0.008, z: 0.1, ry: 0.6 }));
+    if (level >= 2) p.push(...group(colonnade(0.28, 0.17, 0.17, wall, purple, { x: 0, z: 0, ry: 0 }), { x: 0.28, y: T, z: -0.3, ry: -0.5 }));
+    if (level >= 3) {
+      p.push(cone(0.07, 0.62, 4, 0x8f959c, { x: 0.36, y: T + 0.31, z: 0.3, ry: Math.PI / 4 }), cyl(0.05, 0.05, 0.012, 8, 0xd9432b, { x: 0.36, y: T + 0.45, z: 0.3 }), ball(0.022, 0xd9432b, { x: 0.36, y: T + 0.63, z: 0.3 }, 5, 4));
+    }
+    p.push(cyl(0.012, 0.012, 0.16, 5, 0xd9d2c0, { x: 0.02, y: T + 0.08, z: -0.46 }), ball(0.035, c1, { x: 0.02, y: T + 0.19, z: -0.46 }, 6, 5));
+  } else {
+    // 港：桟橋・倉庫・クレーン・小舟（-z 方向が岸）
+    p.push(box(0.5, 0.03, 0.14, 0x8b6a42, { y: 0.05, z: -0.1 }), box(0.12, 0.03, 0.5, 0x8b6a42, { x: 0.12, y: 0.05, z: 0.2 }), box(0.12, 0.03, 0.36, 0x7a5a36, { x: -0.18, y: 0.05, z: 0.14 }));
+    for (const [x, z] of [[0.12, 0.42], [0.12, 0.2], [-0.18, 0.28], [-0.22, -0.1], [0.22, -0.1]]) p.push(cyl(0.014, 0.014, 0.16, 5, 0x4a3520, { x, y: 0.0, z }));
+    p.push(...group(house(0.2, 0.11, 0.13, 0xb59a7a, c1, 0, 0, 0, 0), { x: -0.02, y: 0.065, z: -0.12 }));
+    p.push(cyl(0.012, 0.012, 0.24, 5, 0x4a3520, { x: 0.2, y: 0.18, z: -0.08 }), box(0.012, 0.012, 0.2, 0x4a3520, { x: 0.2, y: 0.3, z: 0.0, rx: -0.5 }));
+    p.push(box(0.09, 0.04, 0.22, 0x6b4a2c, { x: -0.02, y: 0.03, z: 0.3 }), cyl(0.006, 0.006, 0.18, 4, 0x4a3520, { x: -0.02, y: 0.13, z: 0.3 }), box(0.1, 0.1, 0.008, 0xf1ead8, { x: -0.02, y: 0.15, z: 0.31 }));
+  }
+  return { geo: merge(p), smoke };
+}

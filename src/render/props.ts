@@ -1,6 +1,7 @@
 // 山・植生・地表の小物・資源・地形改良・野営地を InstancedMesh で描く（種類ごとに 1 ドローコール）。
 import * as THREE from 'three';
 import type { GameState } from '../core/types';
+import { districtTiles } from './districts';
 import { ball, box, cone, cyl, hash, ico, merge } from './geo';
 import { patchMaterial, type MapUniforms } from './shaders';
 import type { Field } from './terrain';
@@ -204,7 +205,9 @@ export class Props {
   sync(s: GameState): void {
     let h = 0;
     for (const t of s.tiles) h = (Math.imul(h, 31) + t.feature.length * 7 + t.improvement.length * 13 + (t.camp ? 3 : 0)) | 0;
-    const sig = h + ':' + Object.keys(s.cities).length;
+    let b = 0;
+    for (const id in s.cities) b = (Math.imul(b, 31) + s.cities[id].buildings.length * 7 + s.cities[id].pos) | 0;
+    const sig = h + ':' + b;
     if (sig === this.sig) return;
     this.sig = sig;
     this.rebuild(s);
@@ -218,6 +221,7 @@ export class Props {
     const items: Item[] = [];
     const f = this.field;
     const cityTiles = new Set(Object.values(s.cities).map((c) => c.pos));
+    for (const i of districtTiles(s)) cityTiles.add(i);
     for (let i = 0; i < s.tiles.length; i++) {
       const t = s.tiles[i];
       if (t.terrain === 'ocean') continue;
@@ -233,6 +237,7 @@ export class Props {
           const size = sc * (0.72 + hash(i, q + 2) * 0.6);
           const v = 0.84 + hash(i, q + 3) * 0.3;
           const key = typeof pick === 'string' ? pick : pick(hash(i, q + 4));
+          if (t.river && f.nearRiver(cx + Math.cos(a) * r, cz + Math.sin(a) * r)) continue;
           add(key, cx + Math.cos(a) * r, cz + Math.sin(a) * r, hash(i, q + 2) * 6.28, size, size * (0.9 + hash(i, q + 4) * 0.3),
             [tint[0] * v * (0.92 + hash(i, q + 1) * 0.16), tint[1] * v, tint[2] * v * (0.88 + hash(i, q) * 0.2)]);
         }
@@ -241,12 +246,13 @@ export class Props {
       if (t.elev === 2) {
         const kind = t.terrain === 'desert' ? 'peakDry' : t.terrain === 'snow' || t.terrain === 'tundra' ? 'peakSnow' : 'peak';
         const v = () => kind + (hash(i, items.length) < 0.5 ? 'A' : 'B');
-        const big = 1.28 + hash(i, 21) * 0.3;
+        const big = (1.28 + hash(i, 21) * 0.3) * (t.river ? 0.8 : 1);
         add(v(), cx + (hash(i, 22) - 0.5) * 0.2, cz + (hash(i, 23) - 0.5) * 0.2, hash(i, 24) * 6.28, big, 1.55 + hash(i, 25) * 0.75, [1, 1, 1], 0.22);
         const n = 2 + Math.floor(hash(i, 26) * 2);
         for (let k = 0; k < n; k++) {
           const a = hash(i, 30 + k) * 6.28 + k * 2.1, r = 0.42 + hash(i, 40 + k) * 0.2;
           const sc = 0.55 + hash(i, 50 + k) * 0.35;
+          if (t.river && f.nearRiver(cx + Math.cos(a) * r * 1.5, cz + Math.sin(a) * r * 1.5)) continue;
           add(v(), cx + Math.cos(a) * r, cz + Math.sin(a) * r, hash(i, 60 + k) * 6.28, sc, 0.7 + hash(i, 70 + k) * 0.6, [0.95, 0.95, 0.95], 0.15);
         }
         continue;

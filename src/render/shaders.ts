@@ -257,9 +257,12 @@ void main() {
   vec3 turq = vec3(0.08, 0.52, 0.53);
   vec3 col = mix(deep, mid, smoothstep(0.0, 0.5, shallow));
   col = mix(col, turq, smoothstep(0.45, 1.0, shallow));
+  // 内陸の川は少し深い青緑に寄せる
+  float inland = smoothstep(0.78, 0.98, m.b);
+  col = mix(col, vec3(0.035, 0.22, 0.4), inland * 0.9);
   // 浅瀬のコースティクス
   float ca = hcN(p * 4.3 + vec2(uTime * 0.35, 0.0)) * hcN(p * 5.1 - vec2(0.0, uTime * 0.3));
-  col += vec3(0.25, 0.4, 0.35) * smoothstep(0.28, 0.6, ca) * smoothstep(0.35, 0.9, shallow) * 0.5;
+  col += vec3(0.25, 0.4, 0.35) * smoothstep(0.28, 0.6, ca) * smoothstep(0.35, 0.9, shallow) * 0.5 * (1.0 - inland * 0.75);
   float e = 0.06;
   float h0 = wHeight(p);
   vec3 n = normalize(vec3(h0 - wHeight(p + vec2(e, 0.0)), 1.5, h0 - wHeight(p + vec2(0.0, e))));
@@ -275,7 +278,7 @@ void main() {
   col = mix(col, vec3(0.95), foam * 0.75);
   col *= 1.0 - 0.3 * hcCloud(p);
   col = hcOverlay(col, p, uGrid * (0.35 + 0.65 * smoothstep(0.1, 0.5, shallow)));
-  gl_FragColor = vec4(col, mix(0.94, 0.6, smoothstep(0.5, 1.0, shallow)));
+  gl_FragColor = vec4(col, mix(mix(0.94, 0.6, smoothstep(0.5, 1.0, shallow)), 0.92, inland));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   gl_FragColor.rgb = hcFog(gl_FragColor.rgb, p);

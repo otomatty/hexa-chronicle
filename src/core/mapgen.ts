@@ -30,7 +30,7 @@ export function generateMap(w: number, h: number, seed: number, nPlayers: number
   const land: number[] = [];
   for (let i = 0; i < n; i++) {
     const isLand = val[i] > sea;
-    tiles.push({ terrain: isLand ? 'grass' : 'ocean', elev: 0, feature: '', resource: '', improvement: '', owner: -1, cityId: -1, camp: false });
+    tiles.push({ terrain: isLand ? 'grass' : 'ocean', elev: 0, feature: '', resource: '', improvement: '', owner: -1, cityId: -1, camp: false, river: 0 });
     if (isLand) land.push(i);
   }
 
@@ -90,6 +90,69 @@ export function generateMap(w: number, h: number, seed: number, nPlayers: number
   }
   for (const i of extra) tiles[i].terrain = 'coast';
 
+  // --- 川：丘陵や山のふもとの頂点から、標高の低い頂点へ辺づたいに海まで流す
+  {
+    const VC = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+    const tileAt = (a: number, b: number): number => {
+      const t = a + 2 * b;
+      if (((t % 3) + 3) % 3 !== 0) return -1;
+      const r = t / 3;
+      if (r < 0 || r >= h) return -1;
+      const c = (a - (r & 1)) / 2;
+      return c < 0 || c >= w ? -1 : r * w + c;
+    };
+    const ks = (a: number, b: number) => ((((a + 2 * b) % 3) + 3) % 3 === 1 ? [0, 2, 4] : [1, 3, 5]);
+    const vTiles = (a: number, b: number) => ks(a, b).map((k) => tileAt(a - VC[k][0], b - VC[k][1]));
+    const vNbrs = (a: number, b: number) => ks(a, b).map((k) => [a + VC[k][0], b + VC[k][1]]);
+    const water = (i: number) => tiles[i].terrain === 'ocean' || tiles[i].terrain === 'coast';
+    const vElev = (a: number, b: number) => {
+      let e = 0;
+      for (const i of vTiles(a, b)) e += i < 0 ? sea : val[i] + (tiles[i].elev === 2 ? 0.05 : tiles[i].elev === 1 ? 0.02 : 0);
+      return e / 3;
+    };
+    const key = (a: number, b: number) => a + ',' + b;
+    const used = new Set<string>();
+    const sources = land.filter((i) => tiles[i].elev >= 1 && tilesInRange(w, h, i, 2).every((j) => !water(j)));
+    const want = Math.round(land.length / 38);
+    let made = 0;
+    for (let attempt = 0; attempt < want * 8 && made < want && sources.length; attempt++) {
+      const src = sources[Math.floor(rand() * sources.length)];
+      const r0 = (src / w) | 0, c0 = src % w;
+      const a0 = 2 * c0 + (r0 & 1), b0 = (3 * r0 - a0) / 2;
+      const k0 = Math.floor(rand() * 6);
+      let cur = [a0 + VC[k0][0], b0 + VC[k0][1]];
+      const path = [cur];
+      const seen = new Set<string>([key(cur[0], cur[1])]);
+      let ok = false;
+      for (let step = 0; step < 44; step++) {
+        const ts = vTiles(cur[0], cur[1]);
+        if (ts.some((i) => i < 0)) break;
+        if (ts.some(water) || (step > 0 && used.has(key(cur[0], cur[1])))) { ok = true; break; }
+        let best: number[] | null = null, be = 1e9;
+        for (const nx of vNbrs(cur[0], cur[1])) {
+          if (seen.has(key(nx[0], nx[1]))) continue;
+          const e = vElev(nx[0], nx[1]) + rand() * 0.012;
+          if (e < be) { be = e; best = nx; }
+        }
+        if (!best) break;
+        cur = best;
+        seen.add(key(cur[0], cur[1]));
+        path.push(cur);
+      }
+      if (!ok || path.length < 4) continue;
+      for (let k = 0; k + 1 < path.length; k++) {
+        const ta = vTiles(path[k][0], path[k][1]), tb = vTiles(path[k + 1][0], path[k + 1][1]);
+        const shared = ta.filter((i) => i >= 0 && tb.includes(i));
+        if (shared.length !== 2) continue;
+        for (let d = 0; d < 6; d++) {
+          if (nb[shared[0] * 6 + d] === shared[1]) { tiles[shared[0]].river |= 1 << d; tiles[shared[1]].river |= 1 << ((d + 3) % 6); }
+        }
+      }
+      for (const v of path) used.add(key(v[0], v[1]));
+      made++;
+    }
+  }
+
   // --- 資源
   const pick = <T,>(arr: T[]) => arr[Math.floor(rand() * arr.length)];
   for (let i = 0; i < n; i++) {
@@ -141,6 +204,7 @@ export function generateMap(w: number, h: number, seed: number, nPlayers: number
       else if (t.terrain === 'desert' || t.terrain === 'snow') f -= 1;
       if (t.elev === 1) f += 0.5;
       if (t.resource) f += 1;
+      if (t.river) f += 0.6;
     }
     return f;
   };

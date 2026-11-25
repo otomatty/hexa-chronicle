@@ -4,7 +4,10 @@ import { UNITS } from '../core/data';
 import { cityAt, civAt, eraOf, isEmbarked, milAt } from '../core/game';
 import { HEX, SQ3, worldToTile } from '../core/hex';
 import type { GameEvent, GameState } from '../core/types';
-import { cityGeometry, unitGeometry } from './models';
+import { Fx } from './fx';
+import { planDistricts } from './districts';
+import { cityGeometry, districtGeometry, unitGeometry } from './models';
+import { hash } from './geo';
 import { Props } from './props';
 import { createMapTextures, PARCHMENT, patchMaterial, type MapTextures } from './shaders';
 import { buildTerrain, buildWater, Field } from './terrain';
@@ -27,6 +30,7 @@ interface UnitView {
   seg: number;
   lunge: { dx: number; dz: number; t: number } | null;
   phase: number;
+  hit: number;
   dying: number;
   tile: number;
 }
@@ -36,8 +40,16 @@ interface CityView {
   sig: string;
   labelSig: string;
   pos: number;
+  districts: THREE.Mesh[];
+  districtSig: string;
 }
-interface Shot { mesh: THREE.Mesh; a: THREE.Vector3; b: THREE.Vector3; t: number }
+interface Shot { mesh: THREE.Mesh; a: THREE.Vector3; b: THREE.Vector3; t: number; arc: number; heavy: boolean; done: () => void }
+interface Emitter { x: number; y: number; z: number; tile: number; dark: boolean }
+
+const ARROW_GEO = new THREE.BoxGeometry(0.018, 0.018, 0.3);
+const BALL_GEO = new THREE.SphereGeometry(0.07, 7, 5);
+const ARROW_MAT = new THREE.MeshBasicMaterial({ color: 0x5b4025 });
+const BALL_MAT = new THREE.MeshBasicMaterial({ color: 0x2a2622 });
 
 export interface ViewCallbacks {
   onTileClick(tile: number, button: number): void;
@@ -65,6 +77,11 @@ export class GameView {
   private units = new Map<number, UnitView>();
   private cities = new Map<number, CityView>();
   private shots: Shot[] = [];
+  private fx = new Fx();
+  private timers: { at: number; fn: () => void }[] = [];
+  private emitters = new Map<number, Emitter[]>();
+  private campEmitters: Emitter[] = [];
+  private smokeClock = 0;
   private unitMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, flatShading: true });
   private cityMat: THREE.MeshStandardMaterial;
   private ringMesh: THREE.Mesh;
@@ -140,6 +157,7 @@ export class GameView {
     );
     this.ringMesh.visible = false;
     this.ringMesh.renderOrder = 3;
+    this.scene.add(this.fx.points);
     this.scene.add(this.ringMesh);
 
     this.bindInput();
@@ -242,6 +260,7 @@ export class GameView {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.fx.setViewport(h * this.renderer.getPixelRatio(), this.camera.fov);
   }
 
   /** 画面座標 → タイル。高さ場に対してレイを進めて求める */
@@ -310,6 +329,7 @@ export class GameView {
     this.tex.uniforms.uVis.value.needsUpdate = true;
     this.writeTileTex();
     this.props.sync(s);
+    this.campEmitters = s.camps.map((c) => ({ x: this.field.tx(c.pos), y: this.field.tileGround(c.pos) + 0.12, z: this.field.tz(c.pos), tile: c.pos, dark: false }));
     this.syncCities(s);
     this.syncUnits(s);
   }
@@ -330,14 +350,14 @@ export class GameView {
 
   private syncCities(s: GameState): void {
     for (const [id, cv] of this.cities) {
-      if (!s.cities[id]) { this.scene.remove(cv.mesh); cv.mesh.geometry.dispose(); cv.label.remove(); this.cities.delete(id); }
+      if (!s.cities[id]) { this.scene.remove(cv.mesh); cv.mesh.geometry.dispose(); cv.label.remove(); this.clearDistricts(cv, id); this.cities.delete(id); }
     }
     for (const id in s.cities) {
       const c = s.cities[id];
       const p = s.players[c.owner];
       const seen = this.visOf(c.pos) >= 1;
       let cv = this.cities.get(c.id);
-      if (!seen) { if (cv) { cv.mesh.visible = false; cv.label.style.display = 'none'; } continue; }
+      if (!seen) { if (cv) { cv.mesh.visible = false; cv.label.style.display = 'none'; this.clearDistricts(cv, c.id); cv.districtSig = ''; } continue; }
       const sig = [c.owner, Math.min(13, c.pop), eraOf(p), c.buildings.includes('walls'), c.capital].join(':');
       if (!cv) {
         const label = document.createElement('div');
@@ -348,7 +368,7 @@ export class GameView {
         mesh.castShadow = mesh.receiveShadow = true;
         this.tilePos(c.pos, mesh.position);
         this.scene.add(mesh);
-        cv = { mesh, label, sig: '', labelSig: '', pos: c.pos };
+        cv = { mesh, label, sig: '', labelSig: '', pos: c.pos, districts: [], districtSig: '' };
         this.cities.set(c.id, cv);
       }
       cv.mesh.visible = true;
@@ -360,6 +380,7 @@ export class GameView {
           c1: colorNum(p.color), c2: colorNum(p.color2), seed: c.id,
         });
       }
+      this.syncDistricts(s, c.id, cv);
       const info = this.cb.cityLabel(c.id);
       const labelSig = [c.owner, c.pop, c.hp, info.text, info.sub].join('|');
       if (cv.labelSig !== labelSig) {
@@ -370,6 +391,46 @@ export class GameView {
           (c.hp < 200 ? `<i><u style="width:${Math.max(0, c.hp / 2)}%"></u></i>` : '');
       }
     }
+  }
+
+  private clearDistricts(cv: CityView, cityId: number): void {
+    for (const m of cv.districts) { this.scene.remove(m); m.geometry.dispose(); }
+    cv.districts = [];
+    this.emitters.delete(cityId);
+  }
+
+  /** 建造物に応じた区域を、都市の隣の空きタイルに建てる（見た目のみ。タイルの産出には影響しない） */
+  private syncDistricts(s: GameState, cityId: number, cv: CityView): void {
+    const c = s.cities[cityId], p = s.players[c.owner];
+    const era = eraOf(p);
+    const plan = planDistricts(s, c);
+    const sig = c.owner + ':' + era + ':' + plan.map((d) => d.kind + d.level + '@' + d.tile).join(',');
+    if (sig === cv.districtSig) return;
+    cv.districtSig = sig;
+    this.clearDistricts(cv, cityId);
+    const ems: Emitter[] = [];
+    for (const d of plan) {
+      const { geo, smoke } = districtGeometry(d.kind, d.level, era, colorNum(p.color), colorNum(p.color2));
+      const mesh = new THREE.Mesh(geo, this.cityMat);
+      mesh.castShadow = mesh.receiveShadow = true;
+      if (d.kind === 'harbor') {
+        // 岸（都市側）に寄せ、桟橋が沖へ伸びる向きに回す
+        const cx = this.field.tx(c.pos), cz = this.field.tz(c.pos), tx = this.field.tx(d.tile), tz = this.field.tz(d.tile);
+        mesh.position.set(cx + (tx - cx) * 0.6, 0, cz + (tz - cz) * 0.6);
+        mesh.rotation.y = Math.atan2(tx - cx, tz - cz);
+      } else {
+        this.tilePos(d.tile, mesh.position);
+        mesh.rotation.y = hash(cityId, d.tile + 3) * 6.28;
+      }
+      mesh.updateMatrixWorld();
+      for (const sm of smoke) {
+        const w = new THREE.Vector3(sm[0], sm[1], sm[2]).applyMatrix4(mesh.matrixWorld);
+        ems.push({ x: w.x, y: w.y, z: w.z, tile: d.tile, dark: d.level >= 2 });
+      }
+      this.scene.add(mesh);
+      cv.districts.push(mesh);
+    }
+    if (ems.length) this.emitters.set(cityId, ems);
   }
 
   private unitKey(s: GameState, id: number): string {
@@ -394,7 +455,7 @@ export class GameView {
     flag.innerHTML = `<span>${UNITS[u.type].icon}</span><i><u></u></i>`;
     flag.addEventListener('click', (e) => { e.stopPropagation(); this.cb.onUnitClick(id); });
     this.labels.appendChild(flag);
-    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, phase: id * 1.7, dying: 0, tile: at };
+    const uv: UnitView = { mesh, flag, hp: flag.querySelector('u')!, key, queue: [], seg: 0, lunge: null, phase: id * 1.7, hit: 0, dying: 0, tile: at };
     this.units.set(id, uv);
     return uv;
   }
@@ -459,25 +520,63 @@ export class GameView {
         if (!seen) continue;
         const a = this.tilePos(e.from), b = this.tilePos(e.to);
         const uv = this.units.get(e.attacker);
+        const atkType = s.units[e.attacker]?.type ?? uv?.key.split(':')[0] ?? '';
+        const heavy = !!e.cityAttacker || /catapult|cannon|artillery|bombard|fieldcannon/.test(uv?.key ?? atkType);
+        const onCity = !!cityAt(s, e.to);
+        const impact = () => {
+          const target = [...this.units.values()].find((x) => x.tile === e.to && x.dying === 0 && x.mesh.visible);
+          if (target) target.hit = 0.35;
+          if (heavy || onCity) this.fx.blast(b.x, b.y + 0.25, b.z); else this.fx.sparks(b.x, b.y + 0.35, b.z);
+          this.fx.dust(b.x, b.y + 0.08, b.z, onCity ? 10 : 5);
+          if (e.dmgDef > 0) this.floater(e.to, '-' + e.dmgDef, '#ff6a55');
+          if (e.dmgAtk > 0) this.floater(e.from, '-' + e.dmgAtk, '#ffb04a');
+        };
         if (e.ranged) {
-          const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({ color: 0xffd27a }));
-          this.scene.add(mesh);
-          a.y += 0.4; b.y += 0.3;
-          this.shots.push({ mesh, a, b, t: 0 });
-        } else if (uv) {
-          const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
-          uv.lunge = { dx: dx / l, dz: dz / l, t: 0 };
+          a.y += heavy ? 0.3 : 0.45; b.y += 0.3;
+          if (heavy) this.fx.blast(a.x, a.y, a.z);
+          const n = heavy ? 1 : 3;
+          for (let k = 0; k < n; k++) {
+            const mesh = new THREE.Mesh(heavy ? BALL_GEO : ARROW_GEO, heavy ? BALL_MAT : ARROW_MAT);
+            const off = new THREE.Vector3((k - (n - 1) / 2) * 0.16, 0, (k % 2) * 0.1);
+            this.scene.add(mesh);
+            mesh.visible = false;
+            const shot: Shot = { mesh, a: a.clone().add(off), b: b.clone().add(off), t: -k * 0.12, arc: heavy ? 1.3 : 0.8, heavy, done: k === n - 1 ? impact : () => {} };
+            this.shots.push(shot);
+          }
+        } else {
+          if (uv) {
+            const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
+            uv.lunge = { dx: dx / l, dz: dz / l, t: 0 };
+          }
+          this.later(110, impact);
         }
         if (uv && !uv.queue.length) uv.mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
-        if (e.dmgDef > 0) this.floater(e.to, '-' + e.dmgDef, '#ff6a55');
-        if (e.dmgAtk > 0) this.floater(e.from, '-' + e.dmgAtk, '#ffb04a');
       } else if (e.type === 'unitDied') {
         const uv = this.units.get(e.unit);
-        if (uv) { uv.dying = 0.001; uv.flag.remove(); }
+        if (uv) {
+          uv.dying = 0.001;
+          uv.flag.remove();
+          this.later(160, () => this.fx.dust(uv.mesh.position.x, uv.mesh.position.y + 0.1, uv.mesh.position.z, 9));
+        }
+      } else if (e.type === 'cityFounded' && this.visOf(e.pos) === 2) {
+        const p = this.tilePos(e.pos), pl = s.players[e.owner];
+        this.fx.dust(p.x, p.y + 0.1, p.z, 16);
+        this.fx.confetti(p.x, p.y + 0.5, p.z, [colorNum(pl.color), colorNum(pl.color2)]);
+      } else if (e.type === 'cityCaptured' && this.visOf(e.pos) === 2) {
+        const p = this.tilePos(e.pos), pl = s.players[e.to];
+        this.fx.blast(p.x, p.y + 0.3, p.z);
+        this.later(250, () => this.fx.confetti(p.x, p.y + 0.6, p.z, [colorNum(pl.color), colorNum(pl.color2)]));
+      } else if (e.type === 'built' && e.item[0] === 'b' && s.cities[e.city] && this.visOf(s.cities[e.city].pos) === 2) {
+        const p = this.tilePos(s.cities[e.city].pos);
+        this.fx.dust(p.x, p.y + 0.15, p.z, 10);
       } else if (e.type === 'campCleared' && e.owner === this.viewer) {
         this.floater(e.pos, `+${e.gold} 💰`, '#ffd866');
       }
     }
+  }
+
+  private later(ms: number, fn: () => void): void {
+    this.timers.push({ at: performance.now() + ms, fn });
   }
 
   floater(tile: number, text: string, color: string): void {
@@ -549,6 +648,7 @@ export class GameView {
       }
       // 歩行中は左右に揺らし、待機中はわずかに呼吸させる
       if (uv.queue.length) { uv.phase += dt * 15; m.rotation.z = Math.sin(uv.phase) * 0.07; m.rotation.x = 0.06; }
+      else if (uv.hit > 0) { uv.hit -= dt; m.rotation.x = Math.sin(uv.hit * 55) * 0.2 * (uv.hit / 0.35); }
       else { m.rotation.z *= 0.8; m.rotation.x *= 0.8; m.scale.y = UNIT_SCALE * (1 + Math.sin(time * 2.1 + uv.phase) * 0.014); }
       if (uv.queue.length) {
         let step = dt * Math.max(7, uv.queue.length * 3.5);
@@ -570,12 +670,32 @@ export class GameView {
     }
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const sh = this.shots[i];
-      sh.t += dt * 3.4;
+      sh.t += dt * (sh.heavy ? 2.4 : 3.6);
+      if (sh.t < 0) continue;
       const t = Math.min(1, sh.t);
+      const prev = this.v3.copy(sh.mesh.position);
       sh.mesh.position.lerpVectors(sh.a, sh.b, t);
-      sh.mesh.position.y += Math.sin(t * Math.PI) * 0.9;
-      if (sh.t >= 1) { this.scene.remove(sh.mesh); sh.mesh.geometry.dispose(); this.shots.splice(i, 1); }
+      sh.mesh.position.y += Math.sin(t * Math.PI) * sh.arc;
+      if (sh.mesh.visible && !sh.heavy) sh.mesh.lookAt(sh.mesh.position.x * 2 - prev.x, sh.mesh.position.y * 2 - prev.y, sh.mesh.position.z * 2 - prev.z);
+      sh.mesh.visible = true;
+      if (sh.t >= 1) { this.scene.remove(sh.mesh); this.shots.splice(i, 1); sh.done(); }
     }
+    // 予約した演出と、煙突・焚き火の煙
+    const now = performance.now();
+    for (let i = this.timers.length - 1; i >= 0; i--) {
+      if (this.timers[i].at <= now) { const t = this.timers[i]; this.timers.splice(i, 1); t.fn(); }
+    }
+    this.smokeClock += dt;
+    if (this.smokeClock > 0.28) {
+      this.smokeClock = 0;
+      const emit = (e: Emitter) => {
+        if (this.visOf(e.tile) !== 2 || Math.abs(e.x - c.tx) + Math.abs(e.z - c.tz) > c.dist * 1.6 + 8) return;
+        this.fx.smoke(e.x, e.y, e.z, e.dark);
+      };
+      for (const list of this.emitters.values()) list.forEach(emit);
+      this.campEmitters.forEach(emit);
+    }
+    this.fx.update(dt);
     const sel = this.units.get(this.selectedUnit);
     this.ringMesh.visible = !!sel && sel.dying === 0;
     if (sel) {

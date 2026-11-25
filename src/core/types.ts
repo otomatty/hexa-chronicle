@@ -25,6 +25,8 @@ export interface Tile {
   cityId: number;
   /** 蛮族の野営地 */
   camp: boolean;
+  /** 川が流れている辺のビットマスク（bit d = 隣接方向 d との境界） */
+  river: number;
 }
 
 export interface Unit {

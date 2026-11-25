@@ -9,7 +9,7 @@ const C = (hex: number) => new THREE.Color(hex);
 const COL = {
   grass: C(0x5d9b3a), plains: C(0xa9a54e), desert: C(0xdcc27e), tundra: C(0x8e957c), snow: C(0xe9eff3),
   coast: C(0xc9bf8f), ocean: C(0x1d3550), forest: C(0x3f7a30), jungle: C(0x2f7a34), marsh: C(0x4c6b3a),
-  hill: C(0x8a8a52), rock: C(0x958c80), rockDark: C(0x756c62), sand: C(0xdccf9a), deep: C(0x0f2238),
+  hill: C(0x8a8a52), rock: C(0x958c80), rockDark: C(0x756c62), sand: C(0xdccf9a), deep: C(0x0f2238), bank: C(0x8f9a5c), riverBed: C(0x3f5a5c),
 };
 
 function tileColor(t: Tile): THREE.Color {
@@ -35,9 +35,10 @@ export class Field {
   private mtn: Float32Array;
   private water: Uint8Array;
   private col: Float32Array;
+  private river: Uint8Array;
   private seed: number;
   // sample() の結果
-  sh = 0; sr = 0; sg = 0; sb = 0; swat = 0; smt = 0;
+  sh = 0; sr = 0; sg = 0; sb = 0; swat = 0; smt = 0; sriv = 0;
 
   constructor(s: GameState) {
     const n = s.w * s.h;
@@ -47,9 +48,11 @@ export class Field {
     this.base = new Float32Array(n); this.amp = new Float32Array(n);
     this.hill = new Float32Array(n); this.mtn = new Float32Array(n);
     this.water = new Uint8Array(n); this.col = new Float32Array(n * 3);
+    this.river = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const t = s.tiles[i];
       this.cx[i] = tileX(s.w, i); this.cz[i] = tileZ(s.w, i);
+      this.river[i] = t.river;
       let base = 0.14, amp = 0.035;
       if (t.terrain === 'ocean') { base = -0.5; amp = 0.05; this.water[i] = 1; }
       else if (t.terrain === 'coast') { base = -0.15; amp = 0.025; this.water[i] = 1; }
@@ -65,6 +68,7 @@ export class Field {
 
   sample(x: number, z: number): number {
     const i = worldToTile(this.w, this.h, x, z);
+    this.sriv = 0;
     if (i < 0) { this.sh = -0.5; this.sr = COL.ocean.r; this.sg = COL.ocean.g; this.sb = COL.ocean.b; this.swat = 1; this.smt = 0; return -0.5; }
     const { nb, cx, cz, base, amp, hill, mtn, water, col } = this;
     let sw = 0, h = 0, a = 0, hl = 0, peak = 0, wat = 0, swc = 0, r = 0, g = 0, b = 0;
@@ -91,11 +95,34 @@ export class Field {
       const ridge = 1 - Math.abs(2 * noise2(x * 1.3, z * 1.3, this.seed + 9) - 1);
       h += peak * (0.26 + 0.22 * ridge);
     }
+    // 川：タイルの辺に沿って水面下まで溝を掘る（水面の平面がそのまま川になる）
+    const rm = this.river[i];
+    if (rm && h > RIVER_BED) {
+      const px = x - cx[i], pz = z - cz[i];
+      let dmin = 9;
+      for (let d = 0; d < 6; d++) {
+        if (!(rm & (1 << d))) continue;
+        const a = (d + 5) % 6;
+        const ax = CORNER_X[a], az = CORNER_Z[a], ex = CORNER_X[d] - ax, ez = CORNER_Z[d] - az;
+        const tt = Math.min(1, Math.max(0, ((px - ax) * ex + (pz - az) * ez) / (ex * ex + ez * ez)));
+        const qx = px - ax - ex * tt, qz = pz - az - ez * tt;
+        dmin = Math.min(dmin, Math.sqrt(qx * qx + qz * qz));
+      }
+      if (dmin < 0.25) {
+        const tt = Math.min(1, Math.max(0, (dmin - 0.035) / 0.215));
+        const k = tt * tt * (3 - 2 * tt);
+        h = RIVER_BED + (h - RIVER_BED) * k;
+        this.sriv = 1 - k;
+      }
+    }
     this.sh = h; this.sr = r / swc; this.sg = g / swc; this.sb = b / swc; this.swat = wat; this.smt = peak;
     return h;
   }
 
   heightAt(x: number, z: number): number { return this.sample(x, z); }
+
+  /** 川の水面や岸辺にかかる位置か（木などを置かないための判定） */
+  nearRiver(x: number, z: number): boolean { this.sample(x, z); return this.sriv > 0.2; }
 
   /** ユニットや建物を置く高さ（水面より下にはならない） */
   ground(x: number, z: number): number { return Math.max(0, this.sample(x, z)); }
@@ -103,6 +130,10 @@ export class Field {
   tx(i: number): number { return this.cx[i]; }
   tz(i: number): number { return this.cz[i]; }
 }
+
+const RIVER_BED = -0.085;
+const CORNER_X = [0, 1, 2, 3, 4, 5].map((k) => Math.cos((Math.PI / 180) * (30 + 60 * k)) * HEX);
+const CORNER_Z = [0, 1, 2, 3, 4, 5].map((k) => Math.sin((Math.PI / 180) * (30 + 60 * k)) * HEX);
 
 // 六角形の頂点（三角格子上の整数オフセット）
 const CORNERS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
@@ -126,7 +157,7 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
     v = pos.length / 3;
     pos.push(x, h, z);
     col.push(field.sr, field.sg, field.sb);
-    meta.push(field.smt, field.swat);
+    meta.push(field.smt, field.swat, field.sriv);
     vmap.set(key, v);
     return v;
   };
@@ -158,13 +189,15 @@ export function buildTerrain(s: GameState, field: Field, uniforms: MapUniforms, 
   const vc = pos.length / 3;
   for (let v = 0; v < vc; v++) {
     const x = pos[v * 3], h = pos[v * 3 + 1], z = pos[v * 3 + 2];
-    const mt = meta[v * 2], wat = meta[v * 2 + 1];
+    const mt = meta[v * 3], wat = meta[v * 3 + 1], riv = meta[v * 3 + 2];
     cc.setRGB(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]);
     const nz = noise2(x * 2.6, z * 2.6, seed + 77);
     cc.multiplyScalar(0.88 + 0.24 * nz);
-    if (h < 0) {
+    if (riv > 0.02) cc.lerp(h < 0 ? COL.riverBed : COL.bank, Math.min(1, riv * 1.3) * (h < 0 ? 0.9 : 0.65));
+    else if (h < 0) {
       cc.lerp(COL.deep, Math.min(1, -h / 0.45) * 0.85);
-    } else {
+    }
+    if (h >= 0) {
       if (wat > 0.03 && h < 0.1) cc.lerp(COL.sand, Math.min(1, wat * 6) * (1 - h / 0.1));
       const slope = 1 - nrm.getY(v);
       if (h > 0.26 && mt < 0.02) {
