@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hexa-chronicle",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-25",
+  "compatibility_flags": ["nodejs_compat"],
+  // ゲーム本体は静的アセットとして配信し、/api/* だけ Worker で処理する
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // クラウドセーブ用。id を省略しているので初回の wrangler deploy で自動作成される
+  "kv_namespaces": [{ "binding": "SAVES" }],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}
