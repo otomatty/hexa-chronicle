@@ -3,3 +3,5 @@ dist
 .wrangler
 .dev.vars
 *.log
+dist-inline
+src/assets/pack.b64.txt

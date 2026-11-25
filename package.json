@@ -9,7 +9,9 @@
     "preview": "wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "sim": "tsx scripts/sim.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:inline": "base64 -w0 src/assets/pack.bin > src/assets/pack.b64.txt && VITE_INLINE_PACK=1 vite build --base=./ --outDir dist-inline",
+    "assets": "tsx scripts/build-assets.ts"
   },
   "dependencies": {
     "three": "^0.187.0"

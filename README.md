@@ -36,6 +36,7 @@ npm run dev        # Vite 開発サーバー（http://localhost:5173）
 npm run sim        # AI 同士の自動対戦でルールを検証（例: npm run sim -- 3 large 300）
 npm run build      # 型チェック + 本番ビルド（dist/）
 npm run preview    # ビルド済みを wrangler dev で確認（クラウドセーブ API 込み、http://localhost:8787）
+npm run build:inline  # モデルパックを JS に埋め込んだ版を dist-inline/ に出力（バイナリを配信できないホスティング向け）
 ```
 
 `npm run dev` 中にクラウドセーブも試す場合は、別ターミナルで `npx wrangler dev` を起動してください（`/api` は 8787 番へプロキシされます）。

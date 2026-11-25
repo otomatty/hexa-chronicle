@@ -2,7 +2,6 @@
 // scripts/build-assets.ts が作った pack.bin から、頂点カラー付きのジオメトリを取り出す。
 // 読み込めなかった場合は hasPack() が false になり、呼び出し側は手続き生成のモデルにフォールバックする。
 import * as THREE from 'three';
-import url from '../assets/pack.bin?url';
 
 interface Entry { pos: Int16Array; col: Uint8Array; idx: Uint16Array }
 const models = new Map<string, Entry>();
@@ -13,9 +12,20 @@ export async function loadPack(): Promise<boolean> {
   if (tried) return models.size > 0;
   tried = true;
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(String(res.status));
-    const buf = await res.arrayBuffer();
+    let buf: ArrayBuffer;
+    if (import.meta.env.VITE_INLINE_PACK === '1') {
+      // バイナリを配信できないホスティング向け：base64 で JS に埋め込んだものを展開する（npm run build:inline）
+      const data = (await import('../assets/pack.b64.txt?raw')).default;
+      const bin = atob(data.trim());
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      buf = bytes.buffer;
+    } else {
+      const url = (await import('../assets/pack.bin?url')).default;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(String(res.status));
+      buf = await res.arrayBuffer();
+    }
     const headLen = new DataView(buf).getUint32(0, true);
     const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, headLen))) as { scale: number; models: { n: string; v: number; i: number; o: number }[] };
     scale = head.scale;
